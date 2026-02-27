@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import EvoluClientProvider from "@/components/EvoluClientProvider";
 
 export const metadata: Metadata = {
   title: "Wealth Tracker",
@@ -15,10 +16,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body style={{ display: "flex", minHeight: "100vh" }}>
-        <Sidebar />
-        <main style={{ flex: 1, padding: "2rem", maxWidth: "1400px" }}>
-          {children}
-        </main>
+        <EvoluClientProvider>
+          <Sidebar />
+          <main style={{ flex: 1, padding: "2rem", maxWidth: "1400px" }}>
+            {children}
+          </main>
+        </EvoluClientProvider>
       </body>
     </html>
   );

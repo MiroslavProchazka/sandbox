@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/accounts",    label: "Bank Accounts",icon: "💳" },
   { href: "/goals",       label: "Goals",        icon: "🎯" },
   { href: "/history",     label: "History",      icon: "📊" },
+  { href: "/settings",    label: "Account",      icon: "🔑" },
 ];
 
 export default function Sidebar() {
@@ -82,7 +83,7 @@ export default function Sidebar() {
           textAlign: "center",
         }}
       >
-        Data stored locally · Private
+        Synced via Evolu · Private
       </div>
     </aside>
   );
