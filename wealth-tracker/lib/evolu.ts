@@ -112,6 +112,25 @@ export const Schema = {
   },
 };
 
+// Polyfill navigator.locks for sandboxed/restricted browser environments that
+// don't support the Web Locks API. Without this, @evolu/web's SharedWebWorker
+// throws "Cannot read properties of undefined (reading 'request')".
+if (
+  typeof window !== "undefined" &&
+  typeof navigator !== "undefined" &&
+  !("locks" in navigator)
+) {
+  Object.defineProperty(navigator, "locks", {
+    value: {
+      request: (_name: string, callback: () => unknown) =>
+        Promise.resolve().then(callback as () => PromiseLike<unknown>),
+      query: () => Promise.resolve({ held: [], pending: [] }),
+    },
+    configurable: true,
+    writable: true,
+  });
+}
+
 const evolu = createEvolu(evoluReactWebDeps)(Schema, {
   name: SimpleName.orThrow("wealth-tracker"),
   transports: [{ type: "WebSocket", url: getRelayUrl() }],
