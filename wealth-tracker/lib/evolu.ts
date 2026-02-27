@@ -1,3 +1,5 @@
+"use client";
+
 import * as Evolu from "@evolu/common";
 import { createEvolu, SimpleName } from "@evolu/common";
 import { createUseEvolu, EvoluProvider } from "@evolu/react";
