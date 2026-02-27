@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:setup": "node -e \"const D=require('better-sqlite3'),fs=require('fs'),p=require('path');const db=new D(p.join(process.cwd(),'prisma/dev.db'));fs.readFileSync('prisma/migrations/20260226214346_init/migration.sql','utf8').split(';').map(s=>s.trim()).filter(Boolean).forEach(s=>db.exec(s));db.close();console.log('DB ready');\""
+    "db:setup": "npx prisma generate && node -e \"const D=require('better-sqlite3'),fs=require('fs'),p=require('path');const db=new D(p.join(process.cwd(),'prisma/dev.db'));fs.readFileSync('prisma/migrations/20260226214346_init/migration.sql','utf8').split(';').map(s=>s.trim()).filter(Boolean).forEach(s=>db.exec(s));db.close();console.log('DB ready');\""
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.4.1",
