@@ -47,3 +47,16 @@ test('client stops at terminal NDJSON event and cancels an otherwise open respon
   let answer = ''; await client.chat('hi', [], AbortSignal.timeout(1000), x => { answer += x })
   assert.equal(answer, 'ok'); assert.equal(cancelled, true)
 })
+test('continuous synthetic PCM → real HTTP demo STT → chat stream publishes one stable answer', async t => {
+  const { ContinuousController } = await import('../src/continuous')
+  const { simulateUtterance } = await import('../src/continuous-demo')
+  const gateway = await server(t)
+  const client = new GatewayClient(() => ({ gateway, token: 'local-demo-token-only', language: 'cs' }))
+  let resolve!: () => void
+  const answered = new Promise<void>(r => { resolve = r })
+  const c = new ContinuousController({ async start() {}, async stop() {} }, client, () => { if (c.state.reply) resolve() })
+  t.after(() => c.pause())
+  await c.start(); simulateUtterance(c)
+  await answered
+  assert.match(c.state.reply!.answer, /lokální demo/); assert.equal(c.state.microphone, 'on')
+})

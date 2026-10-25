@@ -31,13 +31,16 @@ For a phone dev test, explicitly bind the live gateway with `HOST=0.0.0.0`, allo
 
 SDK 0.0.16 requires Even App 2.2.10+. Start the local server, run `npm run qr -- http://<Mac-LAN-IP>:5173`, and scan through Even developer preview. **Nonproduction manifest:** the whitelist is an example, not a working gateway. For a packaged build replace the placeholder `https://gateway.example.com` network whitelist entry in `app.json` with your real gateway origin before `npm run pack`.
 
-Tap starts recording; tap again sends, with a 30-second recording limit. Double tap cancels. Swipes page the answer. The phone offers full transcript/answer, text input, connection test, context reset and system-confirmed exit. Only the G2 microphone is requested. Long-press and continuous listening are deferred.
+Tap starts recording; tap again sends, with a 30-second recording limit. Double tap cancels. Swipes page the answer. The phone offers full transcript/answer, text input, connection test, context reset and system-confirmed exit. Only the G2 microphone is requested. Long-press remains deferred. Experimental continuous G2 listening is available as an opt-in mode; see [continuous mode, controls, policies and demo](docs/CONTINUOUS.md).
 
 `npm run simulate` starts the installed official simulator with automation port 9899. Simulator results cannot establish real audio/BLE/permissions/background behavior. Private builds can be installed from the phone; use a beta build with active tester membership for launch from the glasses menu and lock-screen testing.
 
 ## Layout
 
 - `src/audio.ts`: bounded PCM capture and canonical WAV encoding
+- `src/vad.ts`: bounded frame-based VAD, pre-roll and WAV segmentation
+- `src/continuous.ts`: opt-in automatic question pipeline, bounded queue and stable reading
+- `src/continuous-demo.ts`: explicit synthetic audio demo without devices or network
 - `src/controller.ts`: recording/inference state and cancellation
 - `src/even.ts`: SDK bridge, G2 mic and gestures
 - `src/api.ts`: gateway client and NDJSON stream handling

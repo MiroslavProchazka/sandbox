@@ -2,6 +2,8 @@ import './style.css'
 import { gatewayUrl, GatewayClient, type Settings } from './api'
 import { AssistantController, type AudioPort } from './controller'
 import { hud, LatestDisplay } from './display'
+import { ContinuousController } from './continuous'
+import { createContinuousDemo, simulateUtterance } from './continuous-demo'
 import { connectEven } from './even'
 
 const root = document.querySelector<HTMLDivElement>('#app')!
@@ -10,7 +12,7 @@ root.innerHTML = `<header><span>BEAST / G2</span><span class="tag">DEVELOPMENT �
 <div class="lens"><pre id="hud" aria-live="polite"></pre></div><p id="bridge" role="status">Connecting to Even G2…</p>
 <div class="actions"><button id="record">Start question</button><button id="cancel" class="secondary">Cancel</button><button id="previous" aria-label="Previous answer page" class="secondary">↑</button><button id="next" aria-label="Next answer page" class="secondary">↓</button></div>
 <p class="hint">G2: tap to record, tap again to send · double tap to cancel · swipe to read</p>
-<form id="ask"><label for="question">Text question · also works without glasses</label><div class="row"><input id="question" maxlength="4000" placeholder="Co umí Beast G2?" required><button>Ask Beast</button></div></form>
+<section aria-label="Listening mode"><label for="mode">Listening mode</label><select id="mode"><option value="manual">Manual · tap to ask</option><option value="continuous">Continuous G2 · automatic questions</option><option value="simulation">Continuous demo · synthetic PCM, no microphone</option></select><label for="question-filter">Automatic reply filter</label><select id="question-filter"><option value="questions">Likely Czech/English questions</option><option value="addressed">Only speech starting with Beast</option></select><div class="actions"><button id="listen">Resume listening</button><button id="pause" class="secondary">Pause listening</button><button id="inject" class="secondary">Simulate speech segment</button><button id="latest" class="secondary">Show latest answer</button></div><p id="listening" role="status"></p><p class="hint">Experimental Czech/English question filter can miss intent or accept rhetorical speech. Continuous mode sends speech segments to Whisper. Only questions are sent to chat. One request, two waiting segments. Later answers wait for Show latest, or swipe next from the last page on G2. In continuous mode tap pauses/resumes, double tap cancels. After interruption, resume explicitly.</p></section><form id="ask"><label for="question">Text question · also works without glasses</label><div class="row"><input id="question" maxlength="4000" placeholder="Co umí Beast G2?" required><button>Ask Beast</button></div></form>
 <div class="detail"><h2>Transcript</h2><p id="transcript">Your spoken question will appear here.</p><h2>Answer</h2><p id="answer">Waiting for your first question.</p><p id="error" role="alert"></p></div></section>
 <aside><h2>Connection</h2><p>This build uses your own gateway. Provider keys stay on its server.</p><form id="settings"><label for="gateway">Gateway origin</label><input id="gateway" type="url" required placeholder="https://your-gateway.example.com"><label for="token">Gateway token</label><input id="token" type="password" autocomplete="off" required placeholder="Kept in memory for this session"><label for="language">Speech language</label><select id="language"><option value="cs">Čeština</option><option value="en">English</option><option value="auto">Automatic</option></select><button>Apply connection</button></form><div class="actions"><button id="health" class="secondary">Test gateway</button><button id="demo" class="secondary">Use local demo</button></div><p id="connection" role="status">Not tested</p><button id="clear" class="secondary">Clear conversation context</button><button id="exit" class="secondary">Exit on glasses</button><p class="hint">Demo uses a loopback gateway and simulated answers. It makes no Beast requests. Real G2 audio and Beast compatibility still require device testing.</p></aside></main>`
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -25,20 +27,35 @@ let port: AudioPort = { async start() { throw new Error('G2 microphone not conne
 let display: LatestDisplay | undefined, page = 0
 let pageClosed = false
 let even: Awaited<ReturnType<typeof connectEven>> | undefined
+let mode: 'manual' | 'continuous' | 'simulation' = 'manual'
+let switchingMode = false
+const continuous = new ContinuousController({ start: () => port.start(), stop: () => port.stop() }, api, paint)
+const simulation = createContinuousDemo(paint)
+const activeContinuous = () => mode === 'simulation' ? simulation : continuous
 const controller = new AssistantController({ start: () => port.start(), stop: () => port.stop() }, api, paint)
 function paint() {
-  const state = controller.state, view = hud(state, page); page = Math.min(page, view.count - 1)
-  element('hud').textContent = view.text; display?.update(view.text)
+  const state = mode === 'manual' ? controller.state : activeContinuous().viewState(), view = hud(state, page); page = Math.min(page, view.count - 1)
+  const listening = activeContinuous().state
+  const status = mode === 'manual' ? 'Manual mode · microphone starts on tap.' : `${mode === 'simulation' ? 'SIMULATED MIC' : 'G2 MIC'}: ${listening.microphone.toUpperCase()} · ${listening.phase} · queue ${listening.queued}/2 · dropped ${listening.dropped} · skipped ${listening.ignored}. ${listening.notice}`
+  element('listening').textContent = status
+  const displayText = mode === 'manual' ? view.text : `${mode === 'simulation' ? 'DEMO' : 'MIC'} ${listening.microphone.toUpperCase()} / ${listening.phase.toUpperCase()}${listening.latest ? ' / NEW' : ''}\n${view.text}`
+  element('hud').textContent = displayText; display?.update(displayText)
   element('transcript').textContent = state.transcript || 'Your spoken question will appear here.'
   element('answer').textContent = state.answer || 'Waiting for your first question.'
   element('error').textContent = state.error
-  const busy = ['starting', 'recording', 'transcribing', 'answering'].includes(state.phase)
+  const busy = switchingMode || (mode === 'manual' ? ['starting', 'recording', 'transcribing', 'answering'].includes(state.phase) : !['paused', 'interrupted', 'error'].includes(listening.phase) || listening.microphone !== 'off')
+  element<HTMLSelectElement>('question-filter').disabled = busy || mode === 'manual'
+  element<HTMLButtonElement>('listen').disabled = mode === 'manual' || busy
+  element<HTMLButtonElement>('pause').disabled = mode === 'manual' || switchingMode
+  element<HTMLButtonElement>('inject').disabled = mode !== 'simulation' || listening.microphone !== 'on'
+  element<HTMLButtonElement>('latest').disabled = mode === 'manual' || !listening.latest
   element<HTMLButtonElement>('record').textContent = state.phase === 'recording' ? `Send question · ${state.seconds}s` : 'Start question'
-  element<HTMLButtonElement>('record').disabled = ['starting', 'transcribing', 'answering'].includes(state.phase)
+  element<HTMLButtonElement>('record').disabled = mode !== 'manual' || switchingMode || ['starting', 'transcribing', 'answering'].includes(state.phase)
   element<HTMLButtonElement>('health').disabled = busy
   for (const control of element<HTMLFormElement>('settings').querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input, select, button')) control.disabled = busy
   element<HTMLButtonElement>('demo').disabled = busy
-  element<HTMLInputElement>('question').disabled = busy
+  element<HTMLInputElement>('question').disabled = busy || mode !== 'manual'
+  element<HTMLSelectElement>('mode').disabled = switchingMode
 }
 function apply() {
   gatewayUrl(gateway.value.trim(), '/api/health')
@@ -55,24 +72,40 @@ element('health').addEventListener('click', async () => {
   catch (error) { element('connection').textContent = String(error) }
 })
 element('record').addEventListener('click', () => { page = 0; void controller.tap() })
-element('cancel').addEventListener('click', () => { void controller.cancel() })
+const pauseAll = async (interrupted = false) => { await Promise.all([controller.cancel(interrupted), continuous.pause(interrupted), simulation.pause(interrupted)]) }
+element('cancel').addEventListener('click', () => { void pauseAll() })
+element('mode').addEventListener('change', async () => {
+  switchingMode = true; paint()
+  await pauseAll()
+  if (continuous.state.microphone !== 'off') { element<HTMLSelectElement>('mode').value = mode; switchingMode = false; paint(); return }
+  mode = element<HTMLSelectElement>('mode').value as typeof mode; page = 0; switchingMode = false; paint()
+})
+element('question-filter').addEventListener('change', () => { const addressed = element<HTMLSelectElement>('question-filter').value === 'addressed'; continuous.setAddressedOnly(addressed); simulation.setAddressedOnly(addressed) })
+element('listen').addEventListener('click', () => { if (!switchingMode && mode !== 'manual') void activeContinuous().start() })
+element('pause').addEventListener('click', () => { void activeContinuous().pause() })
+element('inject').addEventListener('click', () => { if (mode === 'simulation') simulateUtterance(simulation) })
+element('latest').addEventListener('click', () => { page = 0; activeContinuous().showLatest(); paint() })
 element('previous').addEventListener('click', () => { page = Math.max(0, page - 1); paint() })
 element('next').addEventListener('click', () => { page++; paint() })
-element('clear').addEventListener('click', () => { controller.clearHistory(); element('connection').textContent = 'Conversation context cleared.' })
-element('exit').addEventListener('click', () => { if (even) void controller.cancel().then(() => even!.exit()) })
-element('ask').addEventListener('submit', event => { event.preventDefault(); page = 0; void controller.ask(element<HTMLInputElement>('question').value) })
+element('clear').addEventListener('click', () => { controller.clearHistory(); continuous.clearHistory(); simulation.clearHistory(); element('connection').textContent = 'Conversation context cleared.' })
+element('exit').addEventListener('click', () => { if (even) void pauseAll().then(() => even!.exit()) })
+element('ask').addEventListener('submit', event => { event.preventDefault(); page = 0; if (mode === 'manual') void controller.ask(element<HTMLInputElement>('question').value) })
 // A persisted page keeps its SDK subscription and display for bfcache restoration.
-window.addEventListener('pagehide', event => { void controller.cancel(true); if (!event.persisted) { pageClosed = true; display?.dispose(); even?.dispose() } })
-document.addEventListener('visibilitychange', () => { if (document.hidden) void controller.cancel(true) })
+window.addEventListener('pagehide', event => { void pauseAll(true); if (!event.persisted) { pageClosed = true; display?.dispose(); even?.dispose() } })
+document.addEventListener('visibilitychange', () => { if (document.hidden) void pauseAll(true) })
 paint()
 void connectEven(hud(controller.state, 0).text, action => {
-  if (action === 'tap') { page = 0; void controller.tap() }
-  if (action === 'cancel') void controller.cancel()
-  if (action === 'interrupt') { void controller.cancel(true); element('bridge').textContent = 'G2 session interrupted. Start a fresh recording after reconnecting.' }
+  if (action === 'tap') { if (mode === 'manual') { page = 0; void controller.tap() } else if (activeContinuous().state.microphone === 'on') void activeContinuous().pause(); else void activeContinuous().start() }
+  if (action === 'cancel') void pauseAll()
+  if (action === 'interrupt') { void pauseAll(true); element('bridge').textContent = 'G2 session interrupted. Start a fresh recording after reconnecting.' }
   if (action === 'resume') { element('bridge').textContent = 'G2 resumed · tap to start a fresh question'; paint() }
   if (action === 'previous') { page = Math.max(0, page - 1); paint() }
-  if (action === 'next') { page++; paint() }
-}, pcm => controller.onPcm(pcm)).then(connected => {
+  if (action === 'next') {
+    if (mode !== 'manual' && activeContinuous().state.latest && page >= hud(activeContinuous().viewState(), page).count - 1) { page = 0; activeContinuous().showLatest() }
+    else page++
+    paint()
+  }
+}, pcm => { if (mode === 'manual') controller.onPcm(pcm); else if (mode === 'continuous') continuous.onPcm(pcm) }).then(connected => {
   if (pageClosed) { connected.dispose(); return }
   even = connected; port = connected.audio
   display = new LatestDisplay(connected.write, error => { element('bridge').textContent = `Display error: ${String(error)}` })

@@ -29,3 +29,9 @@ Rendered browser → gateway → UI and mobile screenshot verification are **pen
 Actual Beast REST/multipart/STT/chat models and provider cancellation; G2 capture and timing; Czech font; BLE reconnect; battery; locked-phone behavior. No live Beast credentials or private Hermes configuration were accessed. A native SDK call which never settles still requires device/runtime investigation; queuing deliberately prevents overlapping microphone commands.
 
 The manifest still contains `https://gateway.example.com`, an explicitly nonproduction example. This build is not ready for production installation without replacing it and checking the real origin, CORS and phone reachability.
+
+## Continuous-mode extension
+
+Added opt-in G2 listening, bounded VAD/pre-roll, serial segment transcription/chat, Czech/English question heuristic with addressed-only option, duplicate/overlap suppression, pause/interruption and explicit resume, missing-PCM watchdog, and stable completed-answer presentation. `npm run demo:continuous` runs synthetic PCM through the same implementation with no device/network. New continuous HTTP integration also uses the actual demo gateway. See CONTINUOUS.md for precise policies and limitations. Rendered browser/mobile and all hardware/provider gates above remain pending.
+
+Continuous extension validation: **38 tests passed**, synthetic CLI demo passed, TypeScript/Vite build passed and `.ehpk` was stamped (46,665 bytes). The last pack reported an unavailable npm registry version-floor lookup; CLI retained the explicit stricter `min_app_version: 2.2.10` from app.json. This warning does not establish current vendor compatibility.
