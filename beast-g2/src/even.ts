@@ -1,0 +1,51 @@
+import { waitForEvenAppBridge, AudioInputSource, CreateStartUpPageContainer, TextContainerProperty, TextContainerUpgrade, OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk'
+export type Gesture = 'tap' | 'cancel' | 'previous' | 'next' | 'interrupt' | 'resume'
+export function gesture(event: EvenHubEvent): Gesture | undefined {
+  const sys = event.sysEvent?.eventType
+  if (sys === OsEventTypeList.SYSTEM_EXIT_EVENT || sys === OsEventTypeList.ABNORMAL_EXIT_EVENT || sys === OsEventTypeList.FOREGROUND_EXIT_EVENT) return 'interrupt'
+  if (sys === OsEventTypeList.FOREGROUND_ENTER_EVENT) return 'resume'
+  // Only existing text/list envelopes may normalize omitted protobuf zero into a tap.
+  const input = event.textEvent ?? event.listEvent
+  const type = input ? input.eventType ?? 0 : sys
+  if (type === 0) return 'tap'
+  if (type === 3) return 'cancel'
+  if (type === 1) return 'previous'
+  if (type === 2) return 'next'
+}
+export async function connectEven(initial: string, onGesture: (gesture: Gesture) => void, onPcm: (pcm: Uint8Array) => void) {
+  return attachEven(await waitForEvenAppBridge(), initial, onGesture, onPcm)
+}
+export async function attachEven(bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>>, initial: string, onGesture: (gesture: Gesture) => void, onPcm: (pcm: Uint8Array) => void) {
+  let disposed = false
+  let capture = false, operations = Promise.resolve()
+  const serialize = (operation: () => Promise<void>) => { const result = operations.then(operation); operations = result.catch(() => {}); return result }
+  const unsubscribe = bridge.onEvenHubEvent(event => {
+    if (disposed) return
+    if (capture && event.audioEvent?.source === AudioInputSource.Glasses) onPcm(event.audioEvent.audioPcm)
+    const action = gesture(event); if (action) onGesture(action)
+  })
+  try {
+    const result = await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({ containerTotalNum: 1, textObject: [new TextContainerProperty({ xPosition: 16, yPosition: 16, width: 544, height: 256, paddingLength: 8, containerID: 1, containerName: 'beast', content: initial, isEventCapture: 1 })] }))
+    if (result !== 0) throw new Error(`G2 page creation failed (${result}).`)
+  } catch (error) { unsubscribe(); throw error }
+  return {
+    audio: {
+      start: () => serialize(async () => {
+        if (disposed) throw new Error('G2 session disposed.')
+        capture = true
+        try {
+          if (!await bridge.audioControl(true, AudioInputSource.Glasses)) throw new Error('G2 microphone unavailable. Check permission and connection.')
+        } catch (error) {
+          try {
+            if (await bridge.audioControl(false)) capture = false
+          } catch { /* Leave capture set so the controller retries shutdown. */ }
+          throw error
+        }
+      }),
+      stop: () => serialize(async () => { if (!capture) return; if (!await bridge.audioControl(false)) throw new Error('G2 microphone stop was rejected.'); capture = false })
+    },
+    async write(content: string) { if (disposed) return; if (!await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: 1, containerName: 'beast', content }))) throw new Error('G2 text update rejected.') },
+    exit: () => bridge.shutDownPageContainer(1),
+    dispose: () => { disposed = true; unsubscribe(); void serialize(async () => { if (capture) { await bridge.audioControl(false); capture = false } }).catch(() => {}) }
+  }
+}
