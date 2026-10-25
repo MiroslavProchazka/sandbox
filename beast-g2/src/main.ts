@@ -1,3 +1,4 @@
+import { diagnostics, errorCode } from './diagnostics'
 import './style.css'
 import { BeastClient, beastUrl } from './beast'
 import { gatewayUrl, GatewayClient, type Settings } from './api'
@@ -30,19 +31,26 @@ const gatewayApi = new GatewayClient(() => settings), beastApi = new BeastClient
 const currentApi = () => settings.transport === 'direct' ? beastApi : gatewayApi
 const api = { health: () => currentApi().health(), transcribe: (...args: Parameters<GatewayClient['transcribe']>) => currentApi().transcribe(...args), chat: (...args: Parameters<GatewayClient['chat']>) => currentApi().chat(...args) }
 let port: AudioPort = { async start() { throw new Error('G2 microphone not connected. Use a text question to test the gateway.') }, async stop() {} }
+const measuredAudio: AudioPort = {
+  async start() { const trace = diagnostics.span('mic'); try { await port.start(); trace.end('info', { phase: 'on' }) } catch (error) { trace.end('error', { code: errorCode(error) }); throw error } },
+  async stop() { const trace = diagnostics.span('mic'); try { await port.stop(); trace.end('info', { phase: 'off' }) } catch (error) { trace.end('error', { phase: 'unknown' }); throw error } }
+}
 let display: LatestDisplay | undefined, page = 0
 let pageClosed = false
 let even: Awaited<ReturnType<typeof connectEven>> | undefined
 let mode: 'manual' | 'continuous' | 'simulation' = 'manual'
 let switchingMode = false
-const continuous = new ContinuousController({ start: () => port.start(), stop: () => port.stop() }, api, paint)
+const continuous = new ContinuousController(measuredAudio, api, paint)
 const simulation = createContinuousDemo(paint)
 const activeContinuous = () => mode === 'simulation' ? simulation : continuous
-const controller = new AssistantController({ start: () => port.start(), stop: () => port.stop() }, api, paint)
+const controller = new AssistantController(measuredAudio, api, paint)
+let lastDiagnosticState = ''
 function paint() {
   const state = mode === 'manual' ? controller.state : activeContinuous().viewState(), view = hud(state, page); page = Math.min(page, view.count - 1)
   const listening = activeContinuous().state
   const status = mode === 'manual' ? 'Manual mode · microphone starts on tap.' : `${mode === 'simulation' ? 'SIMULATED MIC' : 'G2 MIC'}: ${listening.microphone.toUpperCase()} · ${listening.phase} · queue ${listening.queued}/2 · dropped ${listening.dropped} · skipped ${listening.ignored}. ${listening.notice}`
+  const diagnosticState = `${mode}:${state.phase}:${listening.phase}:${listening.microphone}:${listening.queued}:${listening.dropped}:${listening.ignored}:${Boolean(state.error)}`
+  if (diagnosticState !== lastDiagnosticState) { lastDiagnosticState = diagnosticState; diagnostics.record(mode === 'manual' ? 'app' : 'continuous', 'state.changed', { phase: mode === 'manual' ? state.phase : listening.phase, queued: listening.queued, dropped: listening.dropped, ignored: listening.ignored }, state.error ? 'error' : 'info') }
   element('listening').textContent = status
   const displayText = mode === 'manual' ? view.text : `${mode === 'simulation' ? 'DEMO' : 'MIC'} ${listening.microphone.toUpperCase()} / ${listening.phase.toUpperCase()}${listening.latest ? ' / NEW' : ''}\n${view.text}`
   element('hud').textContent = displayText; display?.update(displayText)
@@ -99,6 +107,8 @@ element('ask').addEventListener('submit', event => { event.preventDefault(); pag
 // A persisted page keeps its SDK subscription and display for bfcache restoration.
 window.addEventListener('pagehide', event => { void pauseAll(true); if (!event.persisted) { pageClosed = true; display?.dispose(); even?.dispose() } })
 document.addEventListener('visibilitychange', () => { if (document.hidden) void pauseAll(true) })
+let audioFrames = 0, audioBytes = 0, lastAudioLog = 0, audioEnergy = 0, audioSamples = 0, audioPeak = 0
+diagnostics.record('sdk', 'bridge.waiting')
 paint()
 void connectEven(hud(controller.state, 0).text, action => {
   if (action === 'tap') { if (mode === 'manual') { page = 0; void controller.tap() } else if (activeContinuous().state.microphone === 'on') void activeContinuous().pause(); else void activeContinuous().start() }
@@ -111,9 +121,33 @@ void connectEven(hud(controller.state, 0).text, action => {
     else page++
     paint()
   }
-}, pcm => { if (mode === 'manual') controller.onPcm(pcm); else if (mode === 'continuous') continuous.onPcm(pcm) }).then(connected => {
+}, pcm => { const samples = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength); for (let i = 0; i + 1 < pcm.byteLength; i += 2) { const value = samples.getInt16(i, true); audioEnergy += value * value; audioSamples++; audioPeak = Math.max(audioPeak, Math.abs(value)) } audioFrames++; audioBytes += pcm.byteLength; if (Date.now() - lastAudioLog >= 1000) { diagnostics.record('audio', 'pcm.received', { frames: audioFrames, bytes: audioBytes, rms: audioSamples ? Math.sqrt(audioEnergy / audioSamples) : 0, peak: audioPeak }); lastAudioLog = Date.now(); audioFrames = audioBytes = audioEnergy = audioSamples = audioPeak = 0 } if (mode === 'manual') controller.onPcm(pcm); else if (mode === 'continuous') continuous.onPcm(pcm) }).then(connected => {
   if (pageClosed) { connected.dispose(); return }
-  even = connected; port = connected.audio
-  display = new LatestDisplay(connected.write, error => { element('bridge').textContent = `Display error: ${String(error)}` })
+  even = connected; port = connected.audio; diagnostics.record('sdk', 'bridge.connected')
+  display = new LatestDisplay(async text => { const trace = diagnostics.span('display', { chars: text.length }); try { await connected.write(text); trace.end() } catch (error) { trace.end('error'); throw error } }, error => { element('bridge').textContent = `Display error: ${String(error)}` })
   element('bridge').textContent = 'Even bridge connected · microphone starts only on request'; paint()
-}).catch(error => { element('bridge').textContent = `Browser preview · G2 unavailable: ${String(error)}` })
+}).catch(error => { diagnostics.record('sdk', 'bridge.failed', { code: errorCode(error) }, 'error'); element('bridge').textContent = `Browser preview · G2 unavailable: ${String(error)}` })
+
+const panel = document.createElement('section')
+panel.className = 'debug-panel'
+panel.innerHTML = `<details><summary>Diagnostics · local metadata only</summary><p>No audio, transcript, answer, API key, URL or request headers are recorded. Network errors from a WebView may combine DNS, TLS and CORS failures; an export alone cannot separate them.</p><div class="actions"><button id="debug-export" class="secondary">Export diagnostic JSON</button><button id="debug-clear" class="secondary">Clear logs</button></div><p id="debug-count" role="status"></p><pre id="debug-events"></pre><textarea id="debug-json" hidden readonly aria-label="Diagnostic JSON fallback"></textarea></details>`
+root.append(panel)
+let debugTimer: ReturnType<typeof setTimeout> | undefined
+function renderDiagnostics() {
+  debugTimer = undefined
+  const events = diagnostics.snapshot()
+  element('debug-count').textContent = `${events.length}/400 events · in memory only`
+  element('debug-events').textContent = events.slice(-30).map(e => `${e.at.slice(11,23)} ${e.level.toUpperCase()} ${e.stage} ${e.event} ${e.traceId || ''} ${JSON.stringify(e.details)}`).join('\n')
+}
+diagnostics.subscribe(() => { if (!debugTimer) debugTimer = setTimeout(renderDiagnostics, 500) })
+element('debug-clear').addEventListener('click', () => diagnostics.clear())
+element('debug-export').addEventListener('click', () => {
+  const text = diagnostics.export(), fallback = element<HTMLTextAreaElement>('debug-json')
+  fallback.hidden = false; fallback.value = text
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' })), link = document.createElement('a')
+  link.href = url; link.download = `beast-g2-diagnostics-${Date.now()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000)
+})
+window.addEventListener('error', () => diagnostics.record('app', 'runtime.error', { code: 'uncaught_error' }, 'error'))
+window.addEventListener('unhandledrejection', () => diagnostics.record('app', 'runtime.rejection', { code: 'unhandled_rejection' }, 'error'))
+document.addEventListener('visibilitychange', () => diagnostics.record('app', 'visibility.changed', { phase: document.hidden ? 'hidden' : 'visible' }))
+diagnostics.record('app', 'session.started'); renderDiagnostics()

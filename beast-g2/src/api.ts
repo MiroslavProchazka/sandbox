@@ -1,3 +1,4 @@
+import { diagnostics, errorCode, type Stage } from './diagnostics'
 export type Settings = { gateway: string; token: string; language: 'cs' | 'en' | 'auto'; transport?: 'gateway' | 'direct'; chatModel?: string; sttModel?: string }
 export type Turn = { role: 'user' | 'assistant'; content: string }
 export function gatewayUrl(base: string, path: string) {
@@ -11,32 +12,35 @@ export class GatewayClient {
   constructor(private settings: () => Settings) {}
   private async request(path: string, init: RequestInit, signal?: AbortSignal) {
     const s = this.settings()
-    if (!s.token) throw new Error('Enter the gateway token first.')
+    const stage: Stage = path.includes('transcrib') ? 'stt' : path.includes('chat') ? 'chat' : 'health'
+    const trace = diagnostics.span(stage, { transport: 'gateway' })
+    if (!s.token) { trace.end('error'); throw new Error('Enter the API key or gateway token first.') }
     const timeout = AbortSignal.timeout(95000), controller = new AbortController()
     const abort = () => controller.abort()
     signal?.addEventListener('abort', abort, { once: true }); timeout.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) controller.abort()
     try {
       const response = await fetch(gatewayUrl(s.gateway, path), { ...init, headers: { ...init.headers, Authorization: `Bearer ${s.token}` }, signal: controller.signal, cache: 'no-store' })
+      trace.mark('response.headers', { status: response.status })
       if (!response.ok) {
         const data = await response.json().catch(() => ({})) as { message?: string; requestId?: string }
         throw new Error(`${data.message || `Gateway HTTP ${response.status}`}${data.requestId ? ` [${data.requestId}]` : ''}`)
       }
       // Keep cancellation and timeout connected until the consumer finishes the body.
-      return { response, release: () => { signal?.removeEventListener('abort', abort); timeout.removeEventListener('abort', abort) } }
-    } catch (error) { signal?.removeEventListener('abort', abort); timeout.removeEventListener('abort', abort); throw error }
+      return { response, fail: (error: unknown) => trace.end('error', { code: timeout.aborted ? 'timeout' : errorCode(error, signal) }), release: () => { signal?.removeEventListener('abort', abort); timeout.removeEventListener('abort', abort); trace.end() } }
+    } catch (error) { trace.end('error', { code: timeout.aborted ? 'timeout' : errorCode(error, signal) }); signal?.removeEventListener('abort', abort); timeout.removeEventListener('abort', abort); throw error }
   }
   async health() {
-    const { response, release } = await this.request('/api/health', {})
-    try { return await response.json() as { mode: string; models: { chat: string; stt: string } } } finally { release() }
+    const { response, release, fail } = await this.request('/api/health', {})
+    try { return await response.json() as { mode: string; models: { chat: string; stt: string } } } catch (error) { fail(error); throw error } finally { release() }
   }
   async transcribe(wav: Uint8Array<ArrayBuffer>, signal: AbortSignal) {
-    const { response, release } = await this.request(`/api/transcribe?language=${this.settings().language}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: new Blob([wav], { type: 'audio/wav' }) }, signal)
-    try { const data = await response.json() as { text?: string }; if (typeof data.text !== 'string') throw new Error('Invalid transcript response.'); return data.text } finally { release() }
+    const { response, release, fail } = await this.request(`/api/transcribe?language=${this.settings().language}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: new Blob([wav], { type: 'audio/wav' }) }, signal)
+    try { const data = await response.json() as { text?: string }; if (typeof data.text !== 'string') throw new Error('Invalid transcript response.'); return data.text } catch (error) { fail(error); throw error } finally { release() }
   }
   async chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void) {
-    const { response, release } = await this.request('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, history }) }, signal)
-    if (!response.body) { release(); throw new Error('Gateway returned no response stream.') }
+    const { response, release, fail } = await this.request('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, history }) }, signal)
+    if (!response.body) { const error = new Error('Gateway returned no response stream.'); fail(error); release(); throw error }
     const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', completed = false
     const consume = (line: string) => {
       if (completed || !line.trim()) return
@@ -54,6 +58,6 @@ export class GatewayClient {
         if (done) { if (pending.trim()) consume(pending); break }
       }
       if (!completed) throw new Error('Connection ended before the answer completed.')
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); release() }
+    } catch (error) { fail(error); throw error } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); release() }
   }
 }

@@ -1,3 +1,4 @@
+import { diagnostics, errorCode, type Stage } from './diagnostics'
 import type { Settings, Turn } from './api'
 export function beastUrl(base: string, path: string) {
   const url = new URL(base)
@@ -8,37 +9,40 @@ export class BeastClient {
   constructor(private settings: () => Settings) {}
   private async request(path: string, init: RequestInit, signal?: AbortSignal) {
     const s = this.settings()
-    if (!s.token) throw new Error('Enter your Beast API key first.')
+    const stage: Stage = path.includes('transcrib') ? 'stt' : path.includes('chat') ? 'chat' : 'health'
+    const trace = diagnostics.span(stage, { transport: 'direct' })
+    if (!s.token) { trace.end('error'); throw new Error('Enter the API key or gateway token first.') }
     const timeout = AbortSignal.timeout(90000), controller = new AbortController(), abort = () => controller.abort()
-    const release = () => { signal?.removeEventListener('abort', abort); timeout.removeEventListener('abort', abort) }
+    const release = () => { signal?.removeEventListener('abort', abort); timeout.removeEventListener('abort', abort); trace.end() }
     signal?.addEventListener('abort', abort, { once: true }); timeout.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) controller.abort()
     try {
       const response = await fetch(beastUrl(s.gateway, path), { ...init, headers: { ...init.headers, Authorization: `Bearer ${s.token}` }, signal: controller.signal, cache: 'no-store' })
+      trace.mark('response.headers', { status: response.status })
       if (!response.ok) { await response.body?.cancel(); throw new Error(`Beast HTTP ${response.status} (${path}; model ${path.startsWith('audio/') ? s.sttModel || 'whisper-live' : s.chatModel || 'beast/big'}). Check endpoint, model and key.`) }
-      return { response, release }
-    } catch (error) { release(); throw error }
+      return { response, release, fail: (error: unknown) => trace.end('error', { code: timeout.aborted ? 'timeout' : errorCode(error, signal) }) }
+    } catch (error) { trace.end('error', { code: timeout.aborted ? 'timeout' : errorCode(error, signal) }); release(); throw error }
   }
   async health() {
-    const { response, release } = await this.request('models', {})
+    const { response, release, fail } = await this.request('models', {})
     try {
       const result = await response.json() as { data?: { id: string }[] }
       if (!Array.isArray(result.data)) throw new Error('Beast did not return an OpenAI-compatible model list.')
       const s = this.settings(), chat = s.chatModel || 'beast/big', stt = s.sttModel || 'whisper-live'
       if (!result.data.some(model => model.id === chat)) throw new Error(`Chat model ${chat} is missing. Available: ${result.data.slice(0, 30).map(model => model.id).join(', ')}`)
       return { mode: 'direct', models: { chat, stt } }
-    } finally { release() }
+    } catch (error) { fail(error); throw error } finally { release() }
   }
   async transcribe(wav: Uint8Array<ArrayBuffer>, signal: AbortSignal) {
     const s = this.settings(), form = new FormData()
     form.set('file', new Blob([wav], { type: 'audio/wav' }), 'question.wav'); form.set('model', s.sttModel || 'whisper-live'); form.set('response_format', 'json')
     if (s.language !== 'auto') form.set('language', s.language)
-    const { response, release } = await this.request('audio/transcriptions', { method: 'POST', body: form }, signal)
-    try { const result = await response.json() as { text?: string }; if (typeof result.text !== 'string' || result.text.length > 4000) throw new Error('Invalid Beast transcript.'); return result.text.trim() } finally { release() }
+    const { response, release, fail } = await this.request('audio/transcriptions', { method: 'POST', body: form }, signal)
+    try { const result = await response.json() as { text?: string }; if (typeof result.text !== 'string' || result.text.length > 4000) throw new Error('Invalid Beast transcript.'); return result.text.trim() } catch (error) { fail(error); throw error } finally { release() }
   }
   async chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void) {
-    const { response, release } = await this.request('chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: this.settings().chatModel || 'beast/big', stream: true, max_tokens: 512, messages: [{ role: 'system', content: 'Answer the question in its language. Use plain text and at most three short sentences for smart glasses. Do not claim live information or tools you do not have.' }, ...history, { role: 'user', content: text }] }) }, signal)
-    if (!response.body) { release(); throw new Error('Beast returned no stream.') }
+    const { response, release, fail } = await this.request('chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: this.settings().chatModel || 'beast/big', stream: true, max_tokens: 512, messages: [{ role: 'system', content: 'Answer the question in its language. Use plain text and at most three short sentences for smart glasses. Do not claim live information or tools you do not have.' }, ...history, { role: 'user', content: text }] }) }, signal)
+    if (!response.body) { const error = new Error('Beast returned no stream.'); fail(error); release(); throw error }
     const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', data = '', complete = false, chars = 0
     const event = () => {
       if (!data || complete) { data = ''; return }
@@ -60,6 +64,6 @@ export class BeastClient {
         if (done) { if (pending && !complete) line(pending.replace(/\r$/, '')); event(); break }
       }
       if (!complete) throw new Error('Beast stream ended before completion.')
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); release() }
+    } catch (error) { fail(error); throw error } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); release() }
   }
 }

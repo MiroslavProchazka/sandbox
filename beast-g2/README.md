@@ -65,3 +65,9 @@ Tap starts recording; tap again sends, with a 30-second recording limit. Double 
 The gateway buffers one utterance and uses REST for speech. It does not infer realtime support from the name `whisper-live`. Answer streaming is required by the initial chat adapter. Remote inference cancellation depends on provider behavior.
 
 Personal hosting instructions: [deployment](docs/DEPLOYMENT.md). No production services have been created.
+
+## Diagnostics
+
+Open **Diagnostics · local metadata only** at the bottom of the phone screen. The in-memory ring retains 400 events: SDK connection, microphone operations, aggregated PCM bytes/frames/RMS/peak (at most once per second), STT/chat HTTP status and durations, continuous queue/drop/ignore counts, display writes and runtime failures. Export JSON for a failed run; a selectable textarea is provided if the Even WebView blocks downloads. Clear logs starts a fresh capture. No automatic upload, persistence, PCM, conversation text, credentials, URLs or headers enter this diagnostic export.
+
+An unmatched request.start identifies an operation that has not settled. Event trace IDs currently identify individual operations, not an entire speech-to-answer turn. Generic WebView network errors cannot distinguish DNS/TLS/CORS by themselves. Node gateway mode additionally emits request ID, stage, status and duration as JSON to stdout. See docs/REVIEW.md for remaining gaps and priorities.

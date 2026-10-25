@@ -40,3 +40,17 @@ test('SDK startup rejection unsubscribes and audio events never normalize to tap
   await assert.rejects(attachEven({ onEvenHubEvent() { return () => { cleaned = true } }, async createStartUpPageContainer() { return 1 } } as any, '', () => {}, () => {}), /creation failed/)
   assert.equal(cleaned, true); assert.equal(gesture({ audioEvent: {} } as any), undefined)
 })
+test('manual microphone stop failure blocks restart until successful explicit cancel', async () => {
+  let fail = true, starts = 0
+  const c = new AssistantController({ async start() { starts++ }, async stop() { if (fail) throw new Error('BLE lost') } }, api, () => {})
+  await c.tap(); await c.cancel(); await c.tap(); assert.equal(starts, 1)
+  fail = false; await c.cancel(); await c.tap(); assert.equal(starts, 2); await c.cancel()
+})
+test('SDK dispose records an unconfirmed microphone shutdown instead of claiming success', async () => {
+  const { diagnostics } = await import('../src/diagnostics')
+  diagnostics.clear()
+  const connection = await attachEven({ onEvenHubEvent() { return () => {} }, async createStartUpPageContainer() { return 0 }, async audioControl(open: boolean) { return open } } as any, '', () => {}, () => {})
+  await connection.audio.start(); connection.dispose()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.ok(diagnostics.snapshot().some(event => event.event === 'dispose.stop_failed' && event.level === 'error'))
+})
