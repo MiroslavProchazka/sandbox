@@ -39,8 +39,8 @@ export function validateChat(input) {
 }
 // Incremental SSE parsing supports CRLF, split UTF-8, multiple data lines and final unterminated frames.
 export async function* readSSE(stream) {
-  const reader = stream.getReader(), decoder = new TextDecoder(); let pending = '', data = [];
-  function line(value) { if (value === '') { const result = data.join('\n'); data = []; return result || null; } if (value.startsWith('data:')) data.push(value.slice(5).replace(/^ /, '')); return null; }
+  const reader = stream.getReader(), decoder = new TextDecoder(); let pending = '', data = [], frameSize = 0;
+  function line(value) { if (value === '') { const result = data.join('\n'); data = []; frameSize = 0; return result || null; } if (value.startsWith('data:')) { frameSize += value.length; if (frameSize > 1048576) throw new ApiError(502, 'invalid_stream', 'Provider stream frame is too large.'); data.push(value.slice(5).replace(/^ /, '')); } return null; }
   try {
     while (true) {
       const { value, done } = await reader.read(); pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
@@ -75,7 +75,7 @@ export function createGateway(config, fetchImpl = fetch) {
     if (req.method !== 'POST' || !['/api/transcribe', '/api/chat'].includes(route)) return json(res, 404, { error: 'not_found', requestId: id });
     if (active >= 2) return json(res, 429, { error: 'busy', message: 'Gateway is busy. Try again shortly.', requestId: id });
     active++;
-    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), config.timeout);
+    const controller = new AbortController(), timer = setTimeout(() => { controller.abort(); if (!req.complete) req.destroy(); }, config.timeout);
     res.on('close', () => controller.abort());
     try {
       if (route === '/api/transcribe') {
@@ -95,7 +95,7 @@ export function createGateway(config, fetchImpl = fetch) {
       let response;
       if (!config.demo) response = await upstream(fetchImpl, config.chatUrl, { method: 'POST', headers: { Authorization: `Bearer ${config.key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: config.chatModel, messages, stream: true, max_tokens: 512 }), signal: controller.signal }, 'chat');
       res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8' });
-      const send = async payload => { if (controller.signal.aborted || res.destroyed) throw new Error('Connection closed'); if (!res.write(`${JSON.stringify(payload)}\n`)) await new Promise((resolve, reject) => { const clean = () => { res.off('drain', drain); res.off('close', close); }; const drain = () => { clean(); resolve(); }; const close = () => { clean(); reject(new Error('Connection closed')); }; res.once('drain', drain); res.once('close', close); }); };
+      const send = async payload => { if (controller.signal.aborted || res.destroyed) throw new Error('Connection closed'); if (!res.write(`${JSON.stringify(payload)}\n`)) await new Promise((resolve, reject) => { const clean = () => { res.off('drain', drain); res.off('close', close); controller.signal.removeEventListener('abort', close); }; const drain = () => { clean(); resolve(); }; const close = () => { clean(); reject(new Error('Connection closed')); }; res.once('drain', drain); res.once('close', close); controller.signal.addEventListener('abort', close, { once: true }); if (controller.signal.aborted) close(); }); };
       await send({ type: 'meta', model: config.chatModel, requestId: id, demo: config.demo });
       if (config.demo) {
         for (const text of ['Toto je lokální demo. ', 'Hlas z G2 pošleme Whisperu a odpověď Beastu zobrazíme na brýlích. ', 'Živý Beast zatím nebyl ověřen.']) await send({ type: 'delta', text });
@@ -109,6 +109,7 @@ export function createGateway(config, fetchImpl = fetch) {
           const choice = part.choices?.[0]; if (choice?.finish_reason === 'stop' || choice?.finish_reason === 'length') finished = true;
           const text = choice?.delta?.content;
           if (typeof text === 'string') { chars += text.length; if (chars > 12000) throw new ApiError(502, 'answer_too_large', 'Provider answer exceeds the display limit.'); await send({ type: 'delta', text }); }
+          if (finished) break;
         }
         if (!finished) throw new ApiError(502, 'truncated_stream', 'Provider stream ended before completion.');
       }

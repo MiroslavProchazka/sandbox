@@ -2,7 +2,7 @@
 
 An early Even Realities G2 voice client for a self-hosted Beast service: glasses microphone → Whisper → chat model → glasses display. TypeScript/Vite frontend, a small dependency-free Node gateway, and a clearly marked local demo.
 
-**Status:** initial implementation. Live Beast API compatibility, real glasses capture, lock-screen survival and deployment are not yet verified. See [design](docs/ANALYSIS.md) and [cloud handoff](docs/HANDOFF.md).
+**Status:** cloud-reviewed development build; see [verification and pending browser checks](docs/CLOUD-VERIFICATION.md). Live Beast API compatibility, real glasses capture, lock-screen survival and deployment are not yet verified. See [design](docs/ANALYSIS.md) and [cloud handoff](docs/HANDOFF.md).
 
 ## Run locally
 
@@ -29,7 +29,7 @@ For a phone dev test, explicitly bind the live gateway with `HOST=0.0.0.0`, allo
 
 ## G2
 
-SDK 0.0.16 requires Even App 2.2.10+. Start the local server, run `npm run qr -- http://<Mac-LAN-IP>:5173`, and scan through Even developer preview. For a packaged build replace the placeholder `https://gateway.example.com` network whitelist entry in `app.json` with your real gateway origin before `npm run pack`.
+SDK 0.0.16 requires Even App 2.2.10+. Start the local server, run `npm run qr -- http://<Mac-LAN-IP>:5173`, and scan through Even developer preview. **Nonproduction manifest:** the whitelist is an example, not a working gateway. For a packaged build replace the placeholder `https://gateway.example.com` network whitelist entry in `app.json` with your real gateway origin before `npm run pack`.
 
 Tap starts recording; tap again sends, with a 30-second recording limit. Double tap cancels. Swipes page the answer. The phone offers full transcript/answer, text input, connection test, context reset and system-confirmed exit. Only the G2 microphone is requested. Long-press and continuous listening are deferred.
 
@@ -46,3 +46,5 @@ Tap starts recording; tap again sends, with a 30-second recording limit. Double 
 - `tests/`: audio, cancellation, display and gateway contract tests
 
 The gateway buffers one utterance and uses REST for speech. It does not infer realtime support from the name `whisper-live`. Answer streaming is required by the initial chat adapter. Remote inference cancellation depends on provider behavior.
+
+Personal hosting instructions: [deployment](docs/DEPLOYMENT.md). No production services have been created.

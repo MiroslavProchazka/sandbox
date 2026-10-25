@@ -39,7 +39,7 @@ export class GatewayClient {
     if (!response.body) { release(); throw new Error('Gateway returned no response stream.') }
     const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', completed = false
     const consume = (line: string) => {
-      if (!line.trim()) return
+      if (completed || !line.trim()) return
       const event = JSON.parse(line) as { type: string; text?: string; message?: string; requestId?: string }
       if (event.type === 'delta' && typeof event.text === 'string') delta(event.text)
       if (event.type === 'done') completed = true
@@ -50,6 +50,7 @@ export class GatewayClient {
         const { value, done } = await reader.read(); pending += done ? decoder.decode() : decoder.decode(value, { stream: true })
         if (pending.length > 65536) throw new Error('Gateway frame exceeds limit.')
         let index; while ((index = pending.indexOf('\n')) >= 0) { consume(pending.slice(0, index)); pending = pending.slice(index + 1) }
+        if (completed) break
         if (done) { if (pending.trim()) consume(pending); break }
       }
       if (!completed) throw new Error('Connection ended before the answer completed.')

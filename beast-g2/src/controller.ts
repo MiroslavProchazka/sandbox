@@ -11,12 +11,13 @@ export class AssistantController {
   private sequence = 0
   private request?: AbortController
   private micStarting = false
+  private stopping = 0
   private recordingTimer?: ReturnType<typeof setTimeout>
   constructor(private audio: AudioPort, private api: AssistantPort, private changed: (state: State) => void) {}
   private set(patch: Partial<State>) { this.state = { ...this.state, ...patch }; this.changed(this.state) }
   async tap() {
     if (this.state.phase === 'recording') return this.finish()
-    if (this.micStarting || ['transcribing', 'answering'].includes(this.state.phase)) return
+    if (this.micStarting || this.stopping || ['transcribing', 'answering'].includes(this.state.phase)) return
     const id = ++this.sequence; this.pcm.clear(); this.micStarting = true
     this.set({ phase: 'starting', transcript: '', answer: '', error: '', seconds: 0 })
     try {
@@ -24,7 +25,10 @@ export class AssistantController {
       if (id !== this.sequence) { await this.audio.stop(); return }
       this.set({ phase: 'recording' })
       this.recordingTimer = setTimeout(() => { void this.finish() }, 30000)
-    } catch (error) { if (id === this.sequence) this.set({ phase: 'error', error: String(error) }) }
+    } catch (error) {
+      try { await this.audio.stop() } catch { /* Preserve the start failure; cancellation can retry stop. */ }
+      if (id === this.sequence) this.set({ phase: 'error', error: String(error) })
+    }
     finally { this.micStarting = false }
   }
   onPcm(chunk: Uint8Array) {
@@ -51,7 +55,7 @@ export class AssistantController {
     finally { if (id === this.sequence) { this.pcm.clear(); this.request = undefined } }
   }
   async ask(text: string) {
-    if (this.micStarting || ['recording', 'transcribing', 'answering'].includes(this.state.phase)) return
+    if (this.micStarting || this.stopping || ['recording', 'transcribing', 'answering'].includes(this.state.phase)) return
     text = text.trim(); if (!text || text.length > 4000) return
     const id = ++this.sequence; this.request = new AbortController()
     this.set({ transcript: text, answer: '', error: '', seconds: 0 })
@@ -73,9 +77,10 @@ export class AssistantController {
     this.set({ phase: 'done' })
   }
   async cancel(interrupted = false) {
-    ++this.sequence; this.request?.abort(); this.request = undefined; clearTimeout(this.recordingTimer); this.pcm.clear()
+    const id = ++this.sequence; this.stopping++; this.request?.abort(); this.request = undefined; clearTimeout(this.recordingTimer); this.pcm.clear()
     this.set({ phase: interrupted ? 'interrupted' : 'idle', answer: '', error: '' })
-    try { await this.audio.stop() } catch (error) { this.set({ phase: 'error', error: `Could not stop microphone: ${String(error)}` }) }
+    try { await this.audio.stop() } catch (error) { if (id === this.sequence) this.set({ phase: 'error', error: `Could not stop microphone: ${String(error)}` }) }
+    finally { this.stopping-- }
   }
   clearHistory() { this.history = [] }
 }

@@ -43,3 +43,19 @@ test('upstream model errors report stage/status without leaking provider body', 
   const result = await fetch(`${base}/api/chat`, { method: 'POST', headers, body: JSON.stringify({ text: 'Hello' }) });
   assert.equal(result.status, 502); const payload = await result.text(); assert.match(payload, /chat_upstream_400/); assert.doesNotMatch(payload, /secret-provider-body|hidden/);
 });
+test('SSE bounds a multiline frame even when every individual line is small', async () => {
+  const bytes = new TextEncoder().encode(`data: ${'x'.repeat(1024)}\n`);
+  const stream = new ReadableStream({ start(c) { for (let i = 0; i < 1100; i++) c.enqueue(bytes); c.close(); } });
+  await assert.rejects(async () => { for await (const _ of readSSE(stream)) {} }, /frame is too large/);
+});
+test('upstream timeout aborts stalled stream and releases gateway capacity', async t => {
+  let aborted = 0;
+  const base = await run(t, { demo: false, timeout: 30, key: 'fake', chatUrl: 'https://fake.invalid/chat' }, async (_url, options) => {
+    return new Response(new ReadableStream({ start(c) { options.signal.addEventListener('abort', () => { aborted++; c.error(new Error('aborted')); }, { once: true }); } }));
+  });
+  for (let i = 0; i < 3; i++) {
+    const response = await fetch(`${base}/api/chat`, { method: 'POST', headers, body: JSON.stringify({ text: 'Hi' }) });
+    assert.match(await response.text(), /Request timed out/);
+  }
+  assert.equal(aborted, 3);
+});

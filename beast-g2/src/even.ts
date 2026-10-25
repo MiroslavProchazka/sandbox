@@ -13,10 +13,14 @@ export function gesture(event: EvenHubEvent): Gesture | undefined {
   if (type === 2) return 'next'
 }
 export async function connectEven(initial: string, onGesture: (gesture: Gesture) => void, onPcm: (pcm: Uint8Array) => void) {
-  const bridge = await waitForEvenAppBridge()
+  return attachEven(await waitForEvenAppBridge(), initial, onGesture, onPcm)
+}
+export async function attachEven(bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>>, initial: string, onGesture: (gesture: Gesture) => void, onPcm: (pcm: Uint8Array) => void) {
+  let disposed = false
   let capture = false, operations = Promise.resolve()
   const serialize = (operation: () => Promise<void>) => { const result = operations.then(operation); operations = result.catch(() => {}); return result }
   const unsubscribe = bridge.onEvenHubEvent(event => {
+    if (disposed) return
     if (capture && event.audioEvent?.source === AudioInputSource.Glasses) onPcm(event.audioEvent.audioPcm)
     const action = gesture(event); if (action) onGesture(action)
   })
@@ -26,11 +30,22 @@ export async function connectEven(initial: string, onGesture: (gesture: Gesture)
   } catch (error) { unsubscribe(); throw error }
   return {
     audio: {
-      start: () => serialize(async () => { capture = true; try { if (!await bridge.audioControl(true, AudioInputSource.Glasses)) throw new Error('G2 microphone unavailable. Check permission and connection.'); } catch (error) { capture = false; throw error } }),
+      start: () => serialize(async () => {
+        if (disposed) throw new Error('G2 session disposed.')
+        capture = true
+        try {
+          if (!await bridge.audioControl(true, AudioInputSource.Glasses)) throw new Error('G2 microphone unavailable. Check permission and connection.')
+        } catch (error) {
+          try {
+            if (await bridge.audioControl(false)) capture = false
+          } catch { /* Leave capture set so the controller retries shutdown. */ }
+          throw error
+        }
+      }),
       stop: () => serialize(async () => { if (!capture) return; if (!await bridge.audioControl(false)) throw new Error('G2 microphone stop was rejected.'); capture = false })
     },
-    async write(content: string) { if (!await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: 1, containerName: 'beast', content }))) throw new Error('G2 text update rejected.') },
+    async write(content: string) { if (disposed) return; if (!await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: 1, containerName: 'beast', content }))) throw new Error('G2 text update rejected.') },
     exit: () => bridge.shutDownPageContainer(1),
-    dispose: unsubscribe
+    dispose: () => { disposed = true; unsubscribe(); void serialize(async () => { if (capture) { await bridge.audioControl(false); capture = false } }).catch(() => {}) }
   }
 }
