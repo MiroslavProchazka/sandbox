@@ -1,4 +1,4 @@
-export type Settings = { gateway: string; token: string; language: 'cs' | 'en' | 'auto' }
+export type Settings = { gateway: string; token: string; language: 'cs' | 'en' | 'auto'; transport?: 'gateway' | 'direct'; chatModel?: string; sttModel?: string }
 export type Turn = { role: 'user' | 'assistant'; content: string }
 export function gatewayUrl(base: string, path: string) {
   const url = new URL(base)

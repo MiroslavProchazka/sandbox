@@ -1,6 +1,6 @@
 {
   "name": "beast-g2",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "pack": "npm run build && evenhub pack app.json dist --sdk-ver 0.0.16",
     "qr": "node scripts/device-qr.mjs",
     "simulate": "node node_modules/@evenrealities/evenhub-simulator/bin/index.js http://localhost:5173 --automation-port 9899",
-    "demo:continuous": "node --import tsx scripts/continuous-demo.ts"
+    "demo:continuous": "node --import tsx scripts/continuous-demo.ts",
+    "pack:device": "node scripts/pack-device.mjs"
   },
   "engines": {
     "node": ">=20.18.0"

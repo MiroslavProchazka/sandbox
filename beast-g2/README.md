@@ -1,3 +1,17 @@
+## Device test build 0.2.0
+
+Direct Beast mode connects to an OpenAI-compatible HTTPS API base (including a `/v1` path when required). Select **Direct Beast API**, enter the base URL and API key, and configure chat/STT model IDs. The key stays in memory for the session. This mode bypasses the Node gateway; the provider must be reachable from the phone and allow the actual Even WebView origin through CORS. Test connection validates the advertised chat model through `/models`; it does not prove STT inference.
+
+Build a device package with the correct network whitelist and default base URL:
+
+```sh
+npm run pack:device -- https://your-beast.example.com/v1
+```
+
+This generates ignored `app.device.json` and `beast-g2-0.2.0.ehpk`. Only the nonsecret base URL enters the bundle. Never pass a key in the URL or build environment. Direct mode supports multipart WAV speech and streamed chat SSE. Gateway mode and local demos remain available in development builds; a device package whitelists only the specified Beast origin.
+
+Validated locally: 43 tests and TypeScript/Vite build. Live provider DNS/network, CORS, inference and real G2 behavior remain external checks. Start with a text question, then manual voice, then opt-in continuous mode.
+
 # Beast G2
 
 An early Even Realities G2 voice client for a self-hosted Beast service: glasses microphone → Whisper → chat model → glasses display. TypeScript/Vite frontend, a small dependency-free Node gateway, and a clearly marked local demo.
