@@ -31,7 +31,7 @@ export class Diagnostics {
     return { id, mark: (event: string, extra: Details = {}) => this.record(stage, event, extra, 'info', id), end: (level: Level = 'info', extra: Details = {}) => { if (ended) return; ended = true; this.record(stage, 'request.end', { ...details, ...extra, durationMs: Date.now() - started }, level, id) } }
   }
   snapshot() { return structuredClone(this.events) }
-  export() { return JSON.stringify({ format: 'beast-g2-diagnostics-v1', version: '0.3.1', buildId: import.meta.env?.VITE_BUILD_ID || 'local-development', sdk: '0.0.16', exportedAt: new Date().toISOString(), capacity: this.capacity, events: this.snapshot() }, null, 2) }
+  export() { return JSON.stringify({ format: 'beast-g2-diagnostics-v1', version: '0.3.2', buildId: import.meta.env?.VITE_BUILD_ID || 'local-development', sdk: '0.0.16', exportedAt: new Date().toISOString(), capacity: this.capacity, events: this.snapshot() }, null, 2) }
   clear() { this.events = []; this.record('app', 'diagnostics.cleared') }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener) }
 }

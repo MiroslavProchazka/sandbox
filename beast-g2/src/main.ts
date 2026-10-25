@@ -10,14 +10,14 @@ import { createContinuousDemo, simulateUtterance } from './continuous-demo'
 import { connectEven } from './even'
 
 const root = document.querySelector<HTMLDivElement>('#app')!
-root.innerHTML = `<header><span>BEAST / G2</span><span class="tag">DEVICE TEST · 0.3.1</span></header>
+root.innerHTML = `<header><span>BEAST / G2</span><span class="tag">DEVICE TEST · 0.3.2</span></header>
 <main><section><p class="eyebrow">YOUR VOICE. YOUR BEAST.</p><h1>A question away.</h1><p>Ask from your glasses. Read the answer in your eyeline.</p>
-<div class="lens"><div class="lens-status"><span id="status-left"></span><span id="status-right"></span></div><pre id="hud" aria-live="polite"></pre></div><p id="bridge" role="status">Connecting to Even G2…</p>
+<div class="lens"><div class="lens-status"><span id="status-left"></span><span id="status-right"></span></div><pre id="hud" aria-live="polite"></pre></div><button id="retry-display" class="secondary">Retry display</button><p id="bridge" role="status">Connecting to Even G2…</p>
 <div class="actions"><button id="record">Start question</button><button id="cancel" class="secondary">Cancel</button><button id="previous" aria-label="Previous answer page" class="secondary">↑</button><button id="next" aria-label="Next answer page" class="secondary">↓</button></div>
 <p class="hint">G2: tap to record, tap again to send · double tap to exit · swipe to read</p>
-<section aria-label="Listening mode"><label for="mode">Listening mode</label><select id="mode"><option value="manual">Manual · tap to ask</option><option value="continuous">Continuous G2 · live transcript + hints</option><option value="simulation">Continuous demo · synthetic PCM, no microphone</option></select><div class="actions"><button id="listen">Resume listening</button><button id="pause" class="secondary">Pause listening</button><button id="inject" class="secondary">Simulate speech segment</button></div><p id="listening" role="status"></p><p class="hint">Live transcript appears while speaking. After 2 seconds of silence, the final transcript goes to Beast. Hints appear automatically for 10 seconds each, then disappear. Keep each utterance under 30 seconds. Tap pauses/resumes; double tap exits.</p></section><form id="ask"><label for="question">Text question · also works without glasses</label><div class="row"><input id="question" maxlength="4000" placeholder="Co umí Beast G2?" required><button>Ask Beast</button></div></form>
+<section aria-label="Listening mode"><label for="mode">Listening mode</label><select id="mode"><option value="manual">Manual · tap to ask</option><option value="continuous">Continuous G2 · live transcript + hints</option><option value="simulation">Continuous demo · synthetic PCM, no microphone</option></select><label for="speech-threshold">Speech sensitivity</label><select id="speech-threshold"><option value="300">Quiet speech</option><option value="600" selected>Normal</option><option value="1000">Noisy room</option></select><div class="actions"><button id="listen">Resume listening</button><button id="pause" class="secondary">Pause listening</button><button id="inject" class="secondary">Simulate speech segment</button></div><p id="listening" role="status"></p><p class="hint">Live transcript appears while speaking. After 2 seconds of silence, the final transcript goes to Beast. Hints appear automatically for 10 seconds each, then disappear. Keep each utterance under 30 seconds. Tap pauses/resumes; double tap exits.</p></section><form id="ask"><label for="question">Text question · also works without glasses</label><div class="row"><input id="question" maxlength="4000" placeholder="Co umí Beast G2?" required><button>Ask Beast</button></div></form>
 <div class="detail"><h2>Transcript</h2><p id="transcript">Your spoken question will appear here.</p><h2>Answer</h2><p id="answer">Waiting for your first question.</p><p id="error" role="alert"></p></div></section>
-<aside><h2>Connection</h2><p>Choose direct Beast API or your own gateway. Credentials stay in memory for this session.</p><form id="settings"><label for="transport">API connection</label><select id="transport"><option value="direct">Direct Beast API</option><option value="gateway">Custom gateway</option></select><label for="gateway">API base URL / gateway origin</label><input id="gateway" type="url" required placeholder="https://your-gateway.example.com"><label for="token">API key / gateway token</label><input id="token" type="password" autocomplete="off" required placeholder="Kept in memory for this session"><label for="chat-model">Chat model</label><input id="chat-model" value="beast/big" required><label for="stt-model">Speech model</label><input id="stt-model" value="whisper-live" required><label for="language">Speech language</label><select id="language"><option value="cs">Čeština</option><option value="en">English</option><option value="auto">Automatic</option></select><button>Apply connection</button></form><div class="actions"><button id="health" class="secondary">Test connection</button><button id="demo" class="secondary">Use local demo</button></div><p id="connection" role="status">Not tested</p><button id="clear" class="secondary">Clear conversation context</button><button id="exit" class="secondary">Exit on glasses</button><p class="hint">Demo uses a loopback gateway and simulated answers. It makes no Beast requests. Real G2 audio and Beast compatibility still require device testing.</p></aside></main>`
+<aside><h2>Connection</h2><p>Direct Beast requires the company VPN on this phone. Keep Tailscale or WireGuard connected. Credentials stay in memory for this session.</p><form id="settings"><label for="transport">API connection</label><select id="transport"><option value="direct">Direct Beast API</option><option value="gateway">Custom gateway</option></select><label for="gateway">API base URL / gateway origin</label><input id="gateway" type="url" required placeholder="https://your-gateway.example.com"><label for="token">API key / gateway token</label><input id="token" type="password" autocomplete="off" required placeholder="Kept in memory for this session"><label for="chat-model">Chat model</label><input id="chat-model" value="beast/big" required><label for="stt-model">Speech model</label><input id="stt-model" value="whisper-live" required><label for="stt-prompt">Names / vocabulary (direct Beast only, optional)</label><input id="stt-prompt" maxlength="300" placeholder="Beast, Slush, names and technical terms"><label for="language">Speech language</label><select id="language"><option value="cs">Čeština</option><option value="en">English</option><option value="auto">Automatic</option></select><button>Apply connection</button></form><div class="actions"><button id="health" class="secondary">Test connection</button><button id="demo" class="secondary">Use local demo</button></div><p id="connection" role="status">Not tested</p><button id="clear" class="secondary">Clear conversation context</button><button id="exit" class="secondary">Exit on glasses</button><p class="hint">Demo uses a loopback gateway and simulated answers. It makes no Beast requests. Real G2 audio and Beast compatibility still require device testing.</p></aside></main>`
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const transport = element<HTMLSelectElement>('transport'), chatModel = element<HTMLInputElement>('chat-model'), sttModel = element<HTMLInputElement>('stt-model')
 const gateway = element<HTMLInputElement>('gateway'), token = element<HTMLInputElement>('token'), language = element<HTMLSelectElement>('language')
@@ -26,8 +26,9 @@ try { preferences = JSON.parse(localStorage.getItem('beast-g2-settings') || '{}'
 gateway.value = typeof preferences.gateway === 'string' ? preferences.gateway : (import.meta.env.VITE_BEAST_URL || 'https://beast.example.com/v1')
 transport.value = preferences.transport === 'gateway' ? 'gateway' : 'direct'
 chatModel.value = preferences.chatModel || 'beast/big'; sttModel.value = preferences.sttModel || 'whisper-live'
+element<HTMLInputElement>('stt-prompt').value = preferences.sttPrompt || ''
 language.value = ['cs', 'en', 'auto'].includes(preferences.language || '') ? preferences.language! : 'cs'
-let settings: Settings = { gateway: gateway.value, token: '', language: language.value as Settings['language'], transport: transport.value as Settings['transport'], chatModel: chatModel.value.trim(), sttModel: sttModel.value.trim() }
+let settings: Settings = { gateway: gateway.value, token: '', language: language.value as Settings['language'], transport: transport.value as Settings['transport'], chatModel: chatModel.value.trim(), sttModel: sttModel.value.trim(), sttPrompt: element<HTMLInputElement>('stt-prompt').value.trim().slice(0,300) }
 const gatewayApi = new GatewayClient(() => settings), beastApi = new BeastClient(() => settings)
 const currentApi = () => settings.transport === 'direct' ? beastApi : gatewayApi
 const api = { health: () => currentApi().health(), transcribe: (...args: Parameters<GatewayClient['transcribe']>) => currentApi().transcribe(...args), chat: (...args: Parameters<GatewayClient['chat']>) => currentApi().chat(...args) }
@@ -41,7 +42,7 @@ let pageClosed = false
 let even: Awaited<ReturnType<typeof connectEven>> | undefined
 let mode: 'manual' | 'continuous' | 'simulation' = 'manual'
 let switchingMode = false
-const continuous = new ContinuousController(measuredAudio, api, paint)
+const continuous = new ContinuousController(measuredAudio, api, paint, { requireDisplayAck: true })
 const simulation = createContinuousDemo(paint)
 const activeContinuous = () => mode === 'simulation' ? simulation : continuous
 const controller = new AssistantController(measuredAudio, api, paint)
@@ -59,11 +60,12 @@ function paint() {
   element('previous').hidden = element('next').hidden = mode !== 'manual'
   const header = statusMonitor.header(mode === 'manual' ? ['starting','recording','transcribing','answering'].includes(state.phase) : listening.microphone === 'on')
   element('status-left').textContent = header.left; element('status-right').textContent = header.right
-  element('hud').textContent = displayText; display?.update(JSON.stringify({ content: displayText, ...header }))
+  element('hud').textContent = displayText; display?.update(JSON.stringify({ content: displayText, ...header, mode, hintId: mode !== 'manual' ? listening.reply?.id : undefined }))
   element('transcript').textContent = state.transcript || 'Your spoken question will appear here.'
   element('answer').textContent = state.answer || 'Waiting for your first question.'
   element('error').textContent = state.error
   const busy = switchingMode || (mode === 'manual' ? ['starting', 'recording', 'transcribing', 'answering'].includes(state.phase) : !['paused', 'interrupted', 'error'].includes(listening.phase) || listening.microphone !== 'off')
+  element<HTMLSelectElement>('speech-threshold').disabled = busy
   element<HTMLButtonElement>('listen').disabled = mode === 'manual' || busy
   element<HTMLButtonElement>('pause').disabled = mode === 'manual' || switchingMode
   element<HTMLButtonElement>('inject').disabled = mode !== 'simulation' || listening.microphone !== 'on'
@@ -77,8 +79,8 @@ function paint() {
 }
 function apply() {
   if (transport.value === 'direct') beastUrl(gateway.value.trim(), 'models'); else gatewayUrl(gateway.value.trim(), '/api/health')
-  settings = { gateway: gateway.value.trim(), token: token.value.trim(), language: language.value as Settings['language'], transport: transport.value as Settings['transport'], chatModel: chatModel.value.trim(), sttModel: sttModel.value.trim() }
-  try { localStorage.setItem('beast-g2-settings', JSON.stringify({ gateway: settings.gateway, language: settings.language, transport: settings.transport, chatModel: settings.chatModel, sttModel: settings.sttModel })) } catch { /* Optional preferences only. */ }
+  settings = { gateway: gateway.value.trim(), token: token.value.trim(), language: language.value as Settings['language'], transport: transport.value as Settings['transport'], chatModel: chatModel.value.trim(), sttModel: sttModel.value.trim(), sttPrompt: element<HTMLInputElement>('stt-prompt').value.trim().slice(0,300) }
+  try { localStorage.setItem('beast-g2-settings', JSON.stringify({ gateway: settings.gateway, language: settings.language, transport: settings.transport, chatModel: settings.chatModel, sttModel: settings.sttModel, sttPrompt: settings.sttPrompt })) } catch { /* Optional preferences only. */ }
   element('connection').textContent = 'Connection applied. Test it before recording.'
 }
 element('settings').addEventListener('submit', event => { event.preventDefault(); try { apply() } catch (error) { element('connection').textContent = String(error) } })
@@ -89,6 +91,7 @@ element('health').addEventListener('click', async () => {
   try { apply(); const result = await api.health(); element('connection').textContent = `${result.mode.toUpperCase()} · chat: ${result.models.chat} · speech: ${result.models.stt}. ${result.mode !== 'demo' ? 'Gateway reachable; provider inference still needs a real question.' : 'Simulated answers only.'}` }
   catch (error) { element('connection').textContent = String(error) }
 })
+element('retry-display').addEventListener('click', () => { if (!display?.retry()) element('bridge').textContent = 'Display unavailable or timed out. Reopen the plugin to reconnect.' })
 element('record').addEventListener('click', () => { page = 0; void controller.tap() })
 const pauseAll = async (interrupted = false) => { await Promise.all([controller.cancel(interrupted), continuous.pause(interrupted), simulation.pause(interrupted)]) }
 element('cancel').addEventListener('click', () => { void pauseAll() })
@@ -98,6 +101,7 @@ element('mode').addEventListener('change', async () => {
   if (continuous.state.microphone !== 'off') { element<HTMLSelectElement>('mode').value = mode; switchingMode = false; paint(); return }
   mode = element<HTMLSelectElement>('mode').value as typeof mode; page = 0; switchingMode = false; paint()
 })
+element('speech-threshold').addEventListener('change', () => { const threshold = Number(element<HTMLSelectElement>('speech-threshold').value); continuous.setSpeechThreshold(threshold); simulation.setSpeechThreshold(threshold) })
 element('listen').addEventListener('click', () => { if (!switchingMode && mode !== 'manual') void activeContinuous().start() })
 element('pause').addEventListener('click', () => { void activeContinuous().pause() })
 element('inject').addEventListener('click', () => { if (mode === 'simulation') simulateUtterance(simulation) })
@@ -130,7 +134,7 @@ void connectEven(hud(controller.state, 0).text, action => {
 }, pcm => { const samples = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength); for (let i = 0; i + 1 < pcm.byteLength; i += 2) { const value = samples.getInt16(i, true); audioEnergy += value * value; audioSamples++; audioPeak = Math.max(audioPeak, Math.abs(value)) } audioFrames++; audioBytes += pcm.byteLength; if (Date.now() - lastAudioLog >= 1000) { diagnostics.record('audio', 'pcm.received', { frames: audioFrames, bytes: audioBytes, rms: audioSamples ? Math.sqrt(audioEnergy / audioSamples) : 0, peak: audioPeak }); lastAudioLog = Date.now(); audioFrames = audioBytes = audioEnergy = audioSamples = audioPeak = 0 } if (mode === 'manual') controller.onPcm(pcm); else if (mode === 'continuous') continuous.onPcm(pcm) }).then(connected => {
   if (pageClosed) { connected.dispose(); return }
   even = connected; port = connected.audio; diagnostics.record('sdk', 'bridge.connected')
-  display = new LatestDisplay(async text => { const trace = diagnostics.span('display', { chars: text.length }); try { const frame = JSON.parse(text); await connected.write(frame.content, frame.left, frame.right); trace.end() } catch (error) { trace.end('error'); throw error } }, error => { element('bridge').textContent = `Display error: ${String(error)} Reopen the plugin to reconnect the display.` })
+  display = new LatestDisplay(async text => { const trace = diagnostics.span('display', { chars: text.length }); try { const frame = JSON.parse(text); await connected.write(frame.content, frame.left, frame.right); trace.end() } catch (error) { trace.end('error'); throw error } }, error => { element('bridge').textContent = `Display error: ${String(error)} Reopen the plugin to reconnect the display.` }, 300, 8000, text => { const frame = JSON.parse(text); if (frame.mode === 'continuous' && mode === 'continuous' && frame.hintId !== undefined) continuous.acknowledgeHint(frame.hintId) })
   stopDeviceStatus = connected.watchStatus(status => { statusMonitor.glasses = status.battery; statusMonitor.connected = status.connected; paint() })
   element('bridge').textContent = 'Even bridge connected · microphone starts only on request'; paint()
 }).catch(error => { diagnostics.record('sdk', 'bridge.failed', { code: errorCode(error) }, 'error'); element('bridge').textContent = `Browser preview · G2 unavailable: ${String(error)}` })

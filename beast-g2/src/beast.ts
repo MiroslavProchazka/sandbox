@@ -36,6 +36,7 @@ export class BeastClient {
   async transcribe(wav: Uint8Array<ArrayBuffer>, signal: AbortSignal) {
     const s = this.settings(), form = new FormData()
     form.set('file', new Blob([wav], { type: 'audio/wav' }), 'question.wav'); form.set('model', s.sttModel || 'whisper-live'); form.set('response_format', 'json')
+    if (s.sttPrompt?.trim()) form.set('prompt', s.sttPrompt.trim().slice(0, 300))
     if (s.language !== 'auto') form.set('language', s.language)
     const { response, release, fail } = await this.request('audio/transcriptions', { method: 'POST', body: form }, signal)
     try { const result = await response.json() as { text?: string }; if (typeof result.text !== 'string' || result.text.length > 4000) throw new Error('Invalid Beast transcript.'); return result.text.trim() } catch (error) { fail(error); throw error } finally { release() }

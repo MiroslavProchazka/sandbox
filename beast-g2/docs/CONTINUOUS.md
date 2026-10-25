@@ -1,3 +1,17 @@
+# Changes in 0.3.2
+
+On real G2, the ten-second hint timer starts only after LatestDisplay receives a successful SDK write for the matching reply ID. Repeated/stale acknowledgements cannot reset or start another hint's timer. An unresolved write times out without starting another native write or acknowledging late resolution. Transient rejections retry at most twice; Retry display requeues the current frame, while a timed-out native session requires reopening. SDK success is an acknowledgement, not physical proof that the wearer read the text.
+
+Hints now use one static three-line view (overflow is marked with an ellipsis), with full text available on the phone during the hint lifetime. An error from a newer request does not obscure an already delivered hint. No automatic page movement.
+
+Speech sensitivity offers Quiet speech / Normal / Noisy room thresholds and can change only while capture is paused. The optional direct-mode vocabulary field sends at most 300 characters as the transcription `prompt`; provider support must be checked, so leave it empty if the server rejects it. This is configuration support, not a measured accuracy improvement. Actual streaming STT remains pending a documented backend protocol; cumulative HTTP previews continue.
+
+The host phone must be on the network/VPN required by the configured private endpoint. General Internet availability does not establish provider reachability. Model aliases may change; choose based on measured latency, not the words big/small.
+
+Validation: 60 tests plus TypeScript/Vite build; physical G2 and STT quality still require device evaluation.
+
+---
+
 # Continuous G2 0.3
 
 The glasses microphone streams PCM16 mono at 16 kHz. VAD uses an RMS speech threshold (600), not literal zero amplitude. Speech ending is 2,000 ms of below-threshold audio. A short pause does not split the utterance. Missing PCM remains a connection failure, not synthetic silence.

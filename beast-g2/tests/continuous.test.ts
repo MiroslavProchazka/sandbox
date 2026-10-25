@@ -169,3 +169,21 @@ test('continuous HUD shows transcript and hint together without page controls', 
   const lens = continuousHud(c.state)
   assert.match(lens, /Co právě říkám/); assert.match(lens, /Odpověď přichází/)
 })
+test('hardware hints wait for matching SDK acknowledgement, then get a full ten seconds', async t => {
+  let clock = 1000
+  const { c } = setup(t, normalApi, { now: () => clock, requireDisplayAck: true })
+  await c.start(); simulateUtterance(c); await tick()
+  const first = c.state.reply!
+  clock += 30000; c.tickHint(); assert.equal(c.state.reply?.id, first.id)
+  c.acknowledgeHint(first.id + 1); c.tickHint(); assert.equal(c.state.reply?.id, first.id)
+  c.acknowledgeHint(first.id)
+  clock += 9999; c.acknowledgeHint(first.id); c.tickHint(); assert.equal(c.state.reply?.id, first.id)
+  clock++; c.tickHint(); assert.equal(c.state.reply, undefined)
+  await c.pause(); c.acknowledgeHint(first.id); assert.equal(c.state.reply, undefined)
+})
+test('sensitivity can change only while paused and preserves the two-second endpoint', async t => {
+  const { c } = setup(t)
+  assert.equal(c.setSpeechThreshold(300), true); assert.equal(c.setSpeechThreshold(-1), false)
+  await c.start(); assert.equal(c.setSpeechThreshold(1000), false)
+  await c.pause(); assert.equal(c.setSpeechThreshold(1000), true)
+})

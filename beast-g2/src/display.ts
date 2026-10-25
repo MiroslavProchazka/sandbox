@@ -27,14 +27,25 @@ export class LatestDisplay {
   private last?: string
   private running = false
   private disposed = false
-  constructor(private write: (text: string) => Promise<void>, private failed: (error: unknown) => void, private interval = 300, private timeoutMs = 8000) {}
-  update(text: string) { if (this.disposed || text === (this.latest ?? this.last)) return; this.latest = text; if (!this.running) void this.flush() }
+  private requested?: string
+  constructor(private write: (text: string) => Promise<void>, private failed: (error: unknown, text?: string) => void, private interval = 300, private timeoutMs = 8000, private delivered: (text: string) => void = () => {}) {}
+  update(text: string) { this.requested = text; if (this.disposed || text === (this.latest ?? this.last)) return; this.latest = text; if (!this.running) void this.flush() }
+  retry() { if (this.disposed || !this.requested) return false; this.last = undefined; this.update(this.requested); return true }
   dispose() { this.disposed = true; this.latest = undefined }
   private async flush() {
     this.running = true
     while (!this.disposed && this.latest !== undefined) {
       const next = this.latest; this.latest = undefined
-      try { await deadline(this.write(next), this.timeoutMs); this.last = next } catch (error) { if (error instanceof DOMException && error.name === 'TimeoutError') this.dispose(); this.failed(error) }
+      for (let attempt = 0; attempt < 3 && !this.disposed; attempt++) {
+        try { await deadline(this.write(next), this.timeoutMs); this.last = next; if (!this.disposed) this.delivered(next); break }
+        catch (error) {
+          const timedOut = error instanceof DOMException && error.name === 'TimeoutError'
+          if (timedOut) this.dispose() // Never overlap an unresolved native write.
+          if (timedOut || attempt === 2) { this.failed(error, next); break }
+          await new Promise(resolve => setTimeout(resolve, this.interval))
+          if (this.latest !== undefined && this.latest !== next) break // Prefer newer state to stale retries.
+        }
+      }
       await new Promise(resolve => setTimeout(resolve, this.interval))
     }
     this.running = false
@@ -46,8 +57,8 @@ export function continuousHud(state: import('./continuous').ContinuousState) {
   const lines = (text: string) => pages(text).flatMap(page => page.split('\n'))
   const transcript = lines(state.transcript || (state.microphone === 'on' ? 'Listening…' : 'Microphone off')).slice(-2).join('\n')
   const answer = state.reply?.answer || state.streaming
-  const hint = lines(state.error ? `Error: ${state.error}` : answer || (state.phase === 'transcribing' ? 'Transcribing…' : state.phase === 'answering' ? 'Beast is thinking…' : ''))
-  const count = Math.max(1, Math.ceil(hint.length / 3))
-  const index = Math.min(state.hintPage, count - 1)
-  return `YOU / ${state.microphone.toUpperCase()}\n${transcript}\n\n${state.error ? 'ERROR' : state.streaming && !state.reply ? 'BEAST …' : 'BEAST'}\n${hint.slice(index * 3, index * 3 + 3).join('\n')}`
+  const hint = lines(answer || (state.error ? `Error: ${state.error}` : state.phase === 'transcribing' ? 'Transcribing…' : state.phase === 'answering' ? 'Beast is thinking…' : ''))
+  const visible = hint.slice(0, 3)
+  if (hint.length > 3) visible[2] = [...visible[2]].slice(0, 37).join('') + '…'
+  return `YOU / ${state.microphone.toUpperCase()}\n${transcript}\n\n${!answer && state.error ? 'ERROR' : state.streaming && !state.reply ? 'BEAST …' : 'BEAST'}\n${visible.join('\n')}`
 }

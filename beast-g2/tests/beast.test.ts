@@ -40,3 +40,13 @@ test('direct model health rejects an unavailable configured chat model', async t
   globalThis.fetch = async () => Response.json({ data: [{ id: 'beast/small' }] })
   await assert.rejects(new BeastClient(() => settings).health(), /beast\/big is missing/)
 })
+test('optional vocabulary is sent only as a bounded transcription prompt', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async (_input, init) => {
+    const form = init!.body as FormData
+    assert.equal((form.get('prompt') as string).length, 300)
+    assert.equal(form.get('language'), 'cs')
+    return Response.json({ text: 'Beast' })
+  }
+  await new BeastClient(() => ({ ...settings, sttPrompt: 'a'.repeat(400) })).transcribe(new Uint8Array(50), new AbortController().signal)
+})
