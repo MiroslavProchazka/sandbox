@@ -1,3 +1,4 @@
+import { diagnostics } from './diagnostics'
 import type { AssistantPort, AudioPort, State } from './controller'
 import type { Turn } from './api'
 import { Segmenter, type VadOptions } from './vad'
@@ -64,8 +65,8 @@ export class ContinuousController {
   onPcm(chunk: Uint8Array) { if (!this.enabled || !['starting', 'listening', 'transcribing', 'answering'].includes(this.state.phase)) return; this.lastAudio = this.now(); this.vad.push(chunk) }
   private enqueue(wav: Uint8Array<ArrayBuffer>) {
     if (!this.enabled) return
-    if (this.queue.length >= 2) { this.queue.shift(); this.state.dropped++ }
-    this.queue.push({ wav, at: this.now() }); this.set({ queued: this.queue.length })
+    if (this.queue.length >= 2) { this.queue.shift(); this.state.dropped++; diagnostics.record('continuous', 'segment.dropped', { dropped: this.state.dropped }, 'warn') }
+    diagnostics.record('continuous', 'segment.queued', { bytes: wav.length, queued: this.queue.length + 1 }); this.queue.push({ wav, at: this.now() }); this.set({ queued: this.queue.length })
     void this.drain()
   }
   private async drain() {
@@ -86,7 +87,7 @@ export class ContinuousController {
           for (const [key, at] of this.seen) if (now - at >= 90000) this.seen.delete(key)
           const duplicate = [...this.seen.keys()].some(previous => sameQuestion(previous, key))
           if (!isQuestion(text, this.options.addressedOnly) || duplicate) {
-            this.set({ ignored: this.state.ignored + 1, notice: duplicate ? 'Duplicate question skipped.' : 'Ordinary or rhetorical speech skipped (heuristic).' }); continue
+            diagnostics.record('continuous', 'transcript.ignored', { chars: text.length, ignored: this.state.ignored + 1 }); this.set({ ignored: this.state.ignored + 1, notice: duplicate ? 'Duplicate question skipped.' : 'Ordinary or rhetorical speech skipped (heuristic).' }); continue
           }
           questionKey = key; this.seen.set(key, now); if (this.seen.size > 64) this.seen.delete(this.seen.keys().next().value!)
           let answer = ''
@@ -100,12 +101,12 @@ export class ContinuousController {
           if (!answer.trim()) throw new Error('Empty answer.')
           this.history.push({ role: 'user', content: text }, { role: 'assistant', content: answer.slice(0, 4000) }); this.history = this.history.slice(-6)
           // First reply appears automatically. Later replies wait for explicit reveal, preserving reading/page position.
-          const reply = { transcript: text, answer }; succeeded = true
+          diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { transcript: text, answer }; succeeded = true
           this.set(this.state.reply ? { latest: reply, notice: 'New answer ready · show latest when finished reading.' } : { reply, notice: 'Answer ready · listening continues.' })
         } catch (error) {
           if (id === this.generation && this.enabled) {
             // Failed answers may be retried; successful questions stay deduplicated.
-            this.set({ error: String(error), notice: 'Segment failed; listening continues. No automatic audio retry.' })
+            diagnostics.record('continuous', 'segment.failed', { code: 'operation_failed' }, 'error'); this.set({ error: String(error), notice: 'Segment failed; listening continues. No automatic audio retry.' })
           }
         } finally {
           if (questionKey && !succeeded) this.seen.delete(questionKey)

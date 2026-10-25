@@ -1,3 +1,17 @@
+## Device test build 0.2.0
+
+Direct Beast mode connects to an OpenAI-compatible HTTPS API base (including a `/v1` path when required). Select **Direct Beast API**, enter the base URL and API key, and configure chat/STT model IDs. The key stays in memory for the session. This mode bypasses the Node gateway; the provider must be reachable from the phone and allow the actual Even WebView origin through CORS. Test connection validates the advertised chat model through `/models`; it does not prove STT inference.
+
+Build a device package with the correct network whitelist and default base URL:
+
+```sh
+npm run pack:device -- https://your-beast.example.com/v1
+```
+
+This generates ignored `app.device.json` and `beast-g2-0.2.0.ehpk`. Only the nonsecret base URL enters the bundle. Never pass a key in the URL or build environment. Direct mode supports multipart WAV speech and streamed chat SSE. Gateway mode and local demos remain available in development builds; a device package whitelists only the specified Beast origin.
+
+Validated locally: 43 tests and TypeScript/Vite build. Live provider DNS/network, CORS, inference and real G2 behavior remain external checks. Start with a text question, then manual voice, then opt-in continuous mode.
+
 # Beast G2
 
 An early Even Realities G2 voice client for a self-hosted Beast service: glasses microphone → Whisper → chat model → glasses display. TypeScript/Vite frontend, a small dependency-free Node gateway, and a clearly marked local demo.
@@ -51,3 +65,9 @@ Tap starts recording; tap again sends, with a 30-second recording limit. Double 
 The gateway buffers one utterance and uses REST for speech. It does not infer realtime support from the name `whisper-live`. Answer streaming is required by the initial chat adapter. Remote inference cancellation depends on provider behavior.
 
 Personal hosting instructions: [deployment](docs/DEPLOYMENT.md). No production services have been created.
+
+## Diagnostics
+
+Open **Diagnostics · local metadata only** at the bottom of the phone screen. The in-memory ring retains 400 events: SDK connection, microphone operations, aggregated PCM bytes/frames/RMS/peak (at most once per second), STT/chat HTTP status and durations, continuous queue/drop/ignore counts, display writes and runtime failures. Export JSON for a failed run; a selectable textarea is provided if the Even WebView blocks downloads. Clear logs starts a fresh capture. No automatic upload, persistence, PCM, conversation text, credentials, URLs or headers enter this diagnostic export.
+
+An unmatched request.start identifies an operation that has not settled. Event trace IDs currently identify individual operations, not an entire speech-to-answer turn. Generic WebView network errors cannot distinguish DNS/TLS/CORS by themselves. Node gateway mode additionally emits request ID, stage, status and duration as JSON to stdout. See docs/REVIEW.md for remaining gaps and priorities.

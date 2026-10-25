@@ -1,3 +1,4 @@
+import { diagnostics } from './diagnostics'
 import { waitForEvenAppBridge, AudioInputSource, CreateStartUpPageContainer, TextContainerProperty, TextContainerUpgrade, OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk'
 export type Gesture = 'tap' | 'cancel' | 'previous' | 'next' | 'interrupt' | 'resume'
 export function gesture(event: EvenHubEvent): Gesture | undefined {
@@ -46,6 +47,6 @@ export async function attachEven(bridge: Awaited<ReturnType<typeof waitForEvenAp
     },
     async write(content: string) { if (disposed) return; if (!await bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: 1, containerName: 'beast', content }))) throw new Error('G2 text update rejected.') },
     exit: () => bridge.shutDownPageContainer(1),
-    dispose: () => { disposed = true; unsubscribe(); void serialize(async () => { if (capture) { await bridge.audioControl(false); capture = false } }).catch(() => {}) }
+    dispose: () => { disposed = true; unsubscribe(); void serialize(async () => { if (capture) { if (!await bridge.audioControl(false)) throw new Error('Microphone shutdown rejected.'); capture = false } }).catch(() => diagnostics.record('sdk', 'dispose.stop_failed', { phase: 'unknown' }, 'error')) }
   }
 }

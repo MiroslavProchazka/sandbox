@@ -1,0 +1,16 @@
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const url = new URL(process.argv[2] || '');
+if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Pass a plain HTTPS Beast API base URL without credentials.');
+const manifest = JSON.parse(readFileSync('app.json', 'utf8'));
+manifest.permissions.find(p => p.name === 'network').whitelist = [url.origin];
+writeFileSync('app.device.json', JSON.stringify(manifest, null, 2) + '\n');
+const fingerprint = createHash('sha256');
+for (const name of readdirSync('src').sort()) fingerprint.update(name).update(readFileSync(`src/${name}`));
+fingerprint.update(JSON.stringify(manifest));
+const buildId = fingerprint.digest('hex').slice(0, 16);
+const build = spawnSync('npm', ['run', 'build'], { stdio: 'inherit', env: { ...process.env, VITE_BUILD_ID: buildId, VITE_BEAST_URL: url.href.replace(/\/$/, '') } });
+if (build.status !== 0) process.exit(build.status || 1);
+const pack = spawnSync(process.execPath, ['node_modules/@evenrealities/evenhub-cli/main.js', 'pack', 'app.device.json', 'dist', '--sdk-ver', '0.0.16', '-o', `beast-g2-${manifest.version}.ehpk`], { stdio: 'inherit' });
+process.exit(pack.status ?? 1);

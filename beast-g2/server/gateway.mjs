@@ -65,6 +65,10 @@ export function createGateway(config, fetchImpl = fetch) {
   let active = 0;
   return http.createServer(async (req, res) => {
     const id = randomUUID(); res.setHeader('X-Request-Id', id); res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
+    const requestAt = Date.now();
+    const stage = req.url?.startsWith('/api/transcribe') ? 'stt' : req.url?.startsWith('/api/chat') ? 'chat' : 'health';
+    res.on('finish', () => { try { config.log?.({ event: 'request.finished', requestId: id, stage, status: res.statusCode, durationMs: Date.now() - requestAt }); } catch {} });
+    res.on('close', () => { if (!res.writableFinished) { try { config.log?.({ event: 'request.disconnected', requestId: id, stage, durationMs: Date.now() - requestAt }); } catch {} } });
     const origin = req.headers.origin;
     if (origin && !config.origins.includes(origin)) return json(res, 403, { error: 'origin_denied', message: 'Origin is not in ALLOWED_ORIGINS.', requestId: id });
     if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id'); }
