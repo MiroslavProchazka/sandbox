@@ -1,3 +1,4 @@
+import { deadline } from './deadline'
 import { diagnostics } from './diagnostics'
 import { waitForEvenAppBridge, AudioInputSource, CreateStartUpPageContainer, TextContainerProperty, TextContainerUpgrade, OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk'
 export type Gesture = 'tap' | 'cancel' | 'previous' | 'next' | 'interrupt' | 'resume'
@@ -16,10 +17,10 @@ export function gesture(event: EvenHubEvent): Gesture | undefined {
 export async function connectEven(initial: string, onGesture: (gesture: Gesture) => void, onPcm: (pcm: Uint8Array) => void) {
   return attachEven(await waitForEvenAppBridge(), initial, onGesture, onPcm)
 }
-export async function attachEven(bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>>, initial: string, onGesture: (gesture: Gesture) => void, onPcm: (pcm: Uint8Array) => void) {
+export async function attachEven(bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>>, initial: string, onGesture: (gesture: Gesture) => void, onPcm: (pcm: Uint8Array) => void, timeoutMs = 8000) {
   let disposed = false
   let capture = false, operations = Promise.resolve()
-  const serialize = (operation: () => Promise<void>) => { const result = operations.then(operation); operations = result.catch(() => {}); return result }
+  const serialize = (operation: () => Promise<void>) => { const result = operations.then(operation); operations = result.catch(() => {}); return deadline(result, timeoutMs) }
   const unsubscribe = bridge.onEvenHubEvent(event => {
     if (disposed) return
     if (capture && event.audioEvent?.source === AudioInputSource.Glasses) onPcm(event.audioEvent.audioPcm)

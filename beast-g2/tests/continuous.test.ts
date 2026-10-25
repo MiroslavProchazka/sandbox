@@ -45,7 +45,7 @@ test('continuous mode deduplicates punctuation/diacritics, expires TTL, and pres
   await c.start(); simulateUtterance(c); await tick(); assert.equal(chats, 1)
   simulateUtterance(c); await tick(); assert.equal(chats, 1); assert.equal(c.state.ignored, 1)
   clock += 90001; simulateUtterance(c); await tick(); assert.equal(chats, 2)
-  simulateUtterance(c); await tick(); assert.equal(c.state.reply?.transcript, texts[0]); assert.equal(c.state.latest?.transcript, texts[3])
+  simulateUtterance(c); await tick(); assert.equal(c.state.reply?.transcript, texts[0]); assert.equal(c.state.latest?.transcript, texts[2]); c.showLatest()
   c.showLatest(); assert.equal(c.state.reply?.transcript, texts[3]); assert.equal(c.state.latest, undefined)
 })
 test('slow API never overlaps and pending queue keeps newest two, dropping stale segments', async t => {
@@ -118,4 +118,19 @@ test('overlap variants deduplicate only with substantial matching content', asyn
 test('real directional questions containing right survive the rhetorical tag filter', () => {
   assert.equal(isQuestion('How do I turn right at this junction?'), true)
   assert.equal(isQuestion('How does right alignment work?'), true)
+})
+
+test('polite and terminal directional questions are retained', () => {
+  for (const text of ['Should I turn right?', 'Prosím tě, kolik je hodin?', 'Please how does this work?']) assert.equal(isQuestion(text), true, text)
+  assert.equal(isQuestion('Is it nice, right?'), false)
+})
+test('completed replies remain FIFO with bounded overflow counted', async t => {
+  let n = 0
+  const { c } = setup(t, { async transcribe() { return `What is item ${++n}?` }, async chat(text, _h, _s, delta) { delta(text) } })
+  await c.start()
+  for (let i = 0; i < 5; i++) { simulateUtterance(c); await tick() }
+  assert.equal(c.state.reply?.transcript, 'What is item 1?')
+  assert.equal(c.state.unread, 3); assert.equal(c.state.repliesDropped, 1)
+  for (const n of [3, 4, 5]) { c.showLatest(); assert.equal(c.state.reply?.transcript, `What is item ${n}?`) }
+  assert.equal(c.state.unread, 0); assert.equal(c.state.latest, undefined)
 })

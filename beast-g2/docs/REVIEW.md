@@ -2,6 +2,15 @@
 
 25. října 2026. Rozsah: klient, Even SDK adaptér, manuální i kontinuální režim, PCM/VAD, přepis a chat, brána, testy, balení a diagnostika. Podklad: sloučený PR #3 (`4a76fd0`), přímý Beast adaptér (`a72a374`) a následné lokální změny diagnostiky. Toto je review korektnosti a provozní připravenosti, nikoli samostatný bezpečnostní audit.
 
+## Stav první opravné iterace po PR #4
+
+- R1 částečně opraveno: mikrofonní operace vrátí callerovi timeout po 8 s, ale podkladová fronta zůstává serializovaná. Controller zachová neznámý stav a vyžaduje úspěšnou explicitní pauzu před novým startem. Pozdní start následovaný stopem je pokryt testem. Display po timeoutu zavře svou frontu a vyžádá znovuotevření pluginu. Timeout nezaručuje fyzické vypnutí mikrofonu. Čekání na bridge/startup stránku a plná obnova session zůstávají otevřené.
+- R3 částečně opraveno: koncové směrové „right“ a úvodní „Prosím tě / Please“ již neodmítají otázku; oddělený dovětek „, right?“ se dál filtruje. Sémantické posouzení a širší korpus zůstávají otevřené.
+- R5 opraveno pro současný prototyp: FIFO inbox tří čekajících odpovědí, explicitní Show next, počet nepřečtených, při overflow odpadne nejstarší čekající odpověď; její ztráta má vlastní čítač i diagnostickou událost. Právě čtená odpověď se nepřepisuje.
+- R2, R4, R6, R7 zůstávají otevřené. Níže je původní audit pro zachování kontextu.
+
+Ověření: 51 testů prošlo včetně pozdního dokončení SDK po timeoutu, zamrzlého display, pořadí/overflow inboxu a obou reprodukcí filtru; TypeScript/Vite build prošel. Živé G2 ani Beast v této iteraci netestovány.
+
 ## Verdikt
 
 Projekt je prototyp pro řízené testování. Testy ověřují mnoho důležitých stavů, ale nedokládají živý Beast, skutečný mikrofon G2 ani provoz se zamčeným telefonem. Zelený build a `.ehpk` nejsou důkazem použitelnosti na hardwaru. Před delší relací doporučuji vyřešit nedokončená volání SDK a ověřit krátkou skutečnou otázku od mikrofonu až po displej.

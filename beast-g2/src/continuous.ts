@@ -4,13 +4,14 @@ import type { Turn } from './api'
 import { Segmenter, type VadOptions } from './vad'
 export type ListeningPhase = 'paused' | 'starting' | 'listening' | 'transcribing' | 'answering' | 'interrupted' | 'error'
 export type Reply = { transcript: string; answer: string }
-export type ContinuousState = { phase: ListeningPhase; microphone: 'off' | 'on' | 'unknown'; queued: number; dropped: number; ignored: number; notice: string; error: string; reply?: Reply; latest?: Reply }
+export type ContinuousState = { phase: ListeningPhase; microphone: 'off' | 'on' | 'unknown'; queued: number; dropped: number; ignored: number; notice: string; error: string; reply?: Reply; latest?: Reply; unread: number; repliesDropped: number }
 export function normalizeQuestion(text: string) { return text.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim() }
 /** Conservative Czech/English heuristic, not semantic intent or speaker recognition. */
 export function isQuestion(text: string, addressedOnly = false) {
-  const normalized = normalizeQuestion(text)
+  const normalized = normalizeQuestion(text).replace(/^(prosim te|prosim vas|prosim|please|excuse me)\s+/, '')
   if (normalized.length < 4 || normalized.length > 4000) return false
-  if (/^(who knows|kdo vi)\b|\b(you know|isn t it|right|ze jo|neni li|neni to tak)\s*$/.test(normalized)) return false
+  if (/^(who knows|kdo vi)\b|\b(you know|isn t it|ze jo|neni li|neni to tak)\s*$/.test(normalized)) return false
+  if (/[,;]\s*right\s*[?.!]*$/i.test(text)) return false
   const addressed = /^(hey |ok )?beast\b/.test(normalized)
   if (addressedOnly) return addressed && normalized.split(' ').length >= 3
   if (addressed) return normalized.split(' ').length >= 3
@@ -24,7 +25,8 @@ export function sameQuestion(a: string, b: string) {
   return shared / new Set([...left, ...right]).size >= 0.85
 }
 export class ContinuousController {
-  state: ContinuousState = { phase: 'paused', microphone: 'off', queued: 0, dropped: 0, ignored: 0, notice: '', error: '' }
+  state: ContinuousState = { phase: 'paused', microphone: 'off', queued: 0, dropped: 0, ignored: 0, notice: '', error: '', unread: 0, repliesDropped: 0 }
+  private replies: Reply[] = []
   private vad: Segmenter
   private generation = 0
   private starting = false
@@ -102,7 +104,11 @@ export class ContinuousController {
           this.history.push({ role: 'user', content: text }, { role: 'assistant', content: answer.slice(0, 4000) }); this.history = this.history.slice(-6)
           // First reply appears automatically. Later replies wait for explicit reveal, preserving reading/page position.
           diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { transcript: text, answer }; succeeded = true
-          this.set(this.state.reply ? { latest: reply, notice: 'New answer ready · show latest when finished reading.' } : { reply, notice: 'Answer ready · listening continues.' })
+          if (this.state.reply) {
+            if (this.replies.length === 3) { this.replies.shift(); this.state.repliesDropped++; diagnostics.record('continuous', 'answer.dropped', { dropped: this.state.repliesDropped }, 'warn') }
+            this.replies.push(reply)
+            this.set({ latest: this.replies[0], unread: this.replies.length, notice: `${this.replies.length} answers waiting · show next when finished reading.` })
+          } else this.set({ reply, notice: 'Answer ready · listening continues.' })
         } catch (error) {
           if (id === this.generation && this.enabled) {
             // Failed answers may be retried; successful questions stay deduplicated.
@@ -124,7 +130,7 @@ export class ContinuousController {
     catch (error) { if (id === this.generation) this.set({ phase: 'error', error: `Microphone stop failed; retry pause: ${String(error)}` }) }
     finally { this.stopping-- }
   }
-  showLatest() { if (this.state.latest) this.set({ reply: this.state.latest, latest: undefined }) }
+  showLatest() { const reply = this.replies.shift(); if (reply) this.set({ reply, latest: this.replies[0], unread: this.replies.length }) }
   setAddressedOnly(value: boolean) { if (this.enabled || this.starting || this.stopping) return false; this.options.addressedOnly = value; return true }
   clearHistory() { this.history = []; this.seen.clear() }
   viewState(): State { return { phase: this.state.reply ? 'done' : this.state.phase === 'starting' ? 'starting' : this.state.phase === 'error' ? 'error' : this.state.phase === 'interrupted' ? 'interrupted' : 'idle', transcript: this.state.reply?.transcript ?? '', answer: this.state.reply?.answer ?? '', error: this.state.error, seconds: 0 } }

@@ -1,3 +1,4 @@
+import { deadline } from './deadline'
 import type { State } from './controller'
 const labels: Record<State['phase'], string> = { idle: 'READY', starting: 'OPENING MIC', recording: 'LISTENING', transcribing: 'TRANSCRIBING', answering: 'BEAST', done: 'ANSWER', error: 'ERROR', interrupted: 'INTERRUPTED' }
 export function pages(text: string): string[] {
@@ -26,14 +27,14 @@ export class LatestDisplay {
   private last?: string
   private running = false
   private disposed = false
-  constructor(private write: (text: string) => Promise<void>, private failed: (error: unknown) => void, private interval = 300) {}
+  constructor(private write: (text: string) => Promise<void>, private failed: (error: unknown) => void, private interval = 300, private timeoutMs = 8000) {}
   update(text: string) { if (this.disposed || text === (this.latest ?? this.last)) return; this.latest = text; if (!this.running) void this.flush() }
   dispose() { this.disposed = true; this.latest = undefined }
   private async flush() {
     this.running = true
     while (!this.disposed && this.latest !== undefined) {
       const next = this.latest; this.latest = undefined
-      try { await this.write(next); this.last = next } catch (error) { this.failed(error) }
+      try { await deadline(this.write(next), this.timeoutMs); this.last = next } catch (error) { if (error instanceof DOMException && error.name === 'TimeoutError') this.dispose(); this.failed(error) }
       await new Promise(resolve => setTimeout(resolve, this.interval))
     }
     this.running = false
