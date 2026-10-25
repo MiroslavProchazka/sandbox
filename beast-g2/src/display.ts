@@ -56,7 +56,7 @@ export class LatestDisplay {
 export function continuousHud(state: import('./continuous').ContinuousState) {
   const lines = (text: string) => pages(text).flatMap(page => page.split('\n'))
   const transcript = lines(state.transcript || (state.microphone === 'on' ? 'Listening…' : 'Microphone off')).slice(-2).join('\n')
-  const answer = state.reply?.answer || state.streaming
+  const answer = state.reply?.hint || state.reply?.answer || state.streaming
   const hint = lines(answer || (state.error ? `Error: ${state.error}` : state.phase === 'transcribing' ? 'Transcribing…' : state.phase === 'answering' ? 'Beast is thinking…' : ''))
   const visible = hint.slice(0, 3)
   if (hint.length > 3) visible[2] = [...visible[2]].slice(0, 37).join('') + '…'

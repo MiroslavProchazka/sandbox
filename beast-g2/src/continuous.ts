@@ -1,12 +1,15 @@
+import { conversationPrompt, parseCue, ReplyHistory, type ConversationConfig } from './conversation'
 import { diagnostics } from './diagnostics'
 import type { AssistantPort, AudioPort, State } from './controller'
 import type { Turn } from './api'
 import { Segmenter, type VadOptions } from './vad'
 export type ListeningPhase = 'paused' | 'starting' | 'listening' | 'transcribing' | 'answering' | 'interrupted' | 'error'
-export type Reply = { id: number; transcript: string; answer: string }
+export type Reply = { id: number; transcript: string; answer: string; hint?: string }
 export type ContinuousState = { phase: ListeningPhase; microphone: 'off' | 'on' | 'unknown'; queued: number; dropped: number; ignored: number; notice: string; error: string; reply?: Reply; latest?: Reply; unread: number; repliesDropped: number; transcript: string; streaming: string; hintPage: number }
 export class ContinuousController {
   state: ContinuousState = { phase: 'paused', microphone: 'off', queued: 0, dropped: 0, ignored: 0, notice: '', error: '', unread: 0, repliesDropped: 0, transcript: '', streaming: '', hintPage: 0 }
+  readonly archive = new ReplyHistory()
+  private conversation: ConversationConfig = { mode: 'direct', notes: '' }
   private replies: Reply[] = []
   private vad: Segmenter
   private generation = 0
@@ -68,6 +71,10 @@ export class ContinuousController {
     this.hintTimer = setInterval(() => this.tickHint(), 250)
     diagnostics.record('continuous', 'answer.shown', { chars: this.state.reply.answer.length })
     this.set({ notice: 'Hint delivered · clears after 10 seconds.' })
+  }
+  configureConversation(config: ConversationConfig) {
+    if (this.enabled || this.starting || this.stopping || config.notes.length > 1500 || !['direct','context'].includes(config.mode)) return false
+    this.conversation = { ...config }; this.history = []; return true
   }
   setSpeechThreshold(threshold: number) {
     if (this.enabled || this.starting || this.stopping || ![300,600,1000].includes(threshold)) return false
@@ -131,16 +138,24 @@ export class ContinuousController {
           if (item.utterance === this.utterance) this.set({ transcript: text })
           if (!text) { this.set({ ignored: this.state.ignored + 1, notice: 'No speech recognized.' }); continue }
           this.set({ phase: 'answering', notice: 'Answering · microphone stays on; at most two queued segments.' })
-          await this.bounded(signal => this.api.chat(text, [...this.history], signal, delta => {
+          const config = { ...this.conversation }
+          await this.bounded(signal => this.api.chat(conversationPrompt(text, config), [...this.history], signal, delta => {
             if (id !== this.generation || request.signal.aborted) return
             if (answer.length + delta.length > 12000) { request.abort(); throw new Error('Answer exceeds limit.') }
-            answer += delta; this.set({ streaming: answer })
-          }), request, this.options.requestMs ?? 30000)
+            answer += delta; if (config.mode === 'direct') this.set({ streaming: answer })
+          }, config.mode === 'context' ? { format: 'cue' } : undefined), request, this.options.requestMs ?? 30000)
           if (id !== this.generation || !this.enabled) continue
           if (!answer.trim()) throw new Error('Empty answer.')
+          let hint: string | undefined
+          if (config.mode === 'context') {
+            const cue = parseCue(answer)
+            if (!cue.show) { this.history.push({ role: 'user', content: text }); this.history = this.history.slice(-6); this.set({ ignored: this.state.ignored + 1, streaming: '', notice: 'Conversation noted · no useful cue needed.' }); continue }
+            hint = cue.hint; answer = cue.detail
+          }
           this.history.push({ role: 'user', content: text }, { role: 'assistant', content: answer.slice(0, 4000) }); this.history = this.history.slice(-6)
+          this.archive.add({ transcript: text, answer, hint, mode: config.mode })
           // Each completed hint gets ten seconds, then the next advances automatically.
-          diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { id: ++this.nextReplyId, transcript: text, answer }
+          diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { id: ++this.nextReplyId, transcript: text, answer, hint }
           if (this.state.reply) {
             this.replies.push(reply)
             this.set({ latest: this.replies[0], unread: this.replies.length, streaming: '', notice: `${this.replies.length} hints waiting · advance automatically.` })

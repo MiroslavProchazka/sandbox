@@ -17,6 +17,7 @@ export function createContinuousDemo(changed: () => void) {
   const api: AssistantPort = {
     async transcribe(_wav, signal) { signal.throwIfAborted(); return transcripts[index++ % transcripts.length] },
     async chat(text, _history, signal, delta) {
+      if (text.startsWith('You support the wearer')) { signal.throwIfAborted(); delta(JSON.stringify({ show: true, hint: '[DEMO] Ujasni si hlavní cíl rozhovoru.', detail: 'Simulovaná kontextová nápověda. Zeptej se na požadovaný výsledek a ověř, zda mu obě strany rozumějí stejně.' })); return }
       signal.throwIfAborted(); delta(`[SIMULATED] ${text} `)
       await Promise.resolve(); signal.throwIfAborted(); delta('Toto je demo průběžného poslechu bez mikrofonu a bez Beast volání.')
     }

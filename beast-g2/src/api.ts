@@ -1,3 +1,4 @@
+export type ChatOptions = { format?: 'cue' }
 import { diagnostics, errorCode, type Stage } from './diagnostics'
 export type Settings = { gateway: string; token: string; language: 'cs' | 'en' | 'auto'; transport?: 'gateway' | 'direct'; chatModel?: string; sttModel?: string; sttPrompt?: string }
 export type Turn = { role: 'user' | 'assistant'; content: string }
@@ -38,8 +39,8 @@ export class GatewayClient {
     const { response, release, fail } = await this.request(`/api/transcribe?language=${this.settings().language}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: new Blob([wav], { type: 'audio/wav' }) }, signal)
     try { const data = await response.json() as { text?: string }; if (typeof data.text !== 'string') throw new Error('Invalid transcript response.'); return data.text } catch (error) { fail(error); throw error } finally { release() }
   }
-  async chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void) {
-    const { response, release, fail } = await this.request('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, history }) }, signal)
+  async chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void, options?: ChatOptions) {
+    const { response, release, fail } = await this.request('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, history, format: options?.format }) }, signal)
     if (!response.body) { const error = new Error('Gateway returned no response stream.'); fail(error); release(); throw error }
     const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', completed = false
     const consume = (line: string) => {

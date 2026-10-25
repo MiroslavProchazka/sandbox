@@ -10,12 +10,14 @@ import { createContinuousDemo, simulateUtterance } from './continuous-demo'
 import { connectEven } from './even'
 
 const root = document.querySelector<HTMLDivElement>('#app')!
-root.innerHTML = `<header><span>BEAST / G2</span><span class="tag">DEVICE TEST · 0.3.2</span></header>
+root.innerHTML = `<header><span>BEAST / G2</span><span class="tag">DEVICE TEST · 0.4.0</span></header>
 <main><section><p class="eyebrow">YOUR VOICE. YOUR BEAST.</p><h1>A question away.</h1><p>Ask from your glasses. Read the answer in your eyeline.</p>
 <div class="lens"><div class="lens-status"><span id="status-left"></span><span id="status-right"></span></div><pre id="hud" aria-live="polite"></pre></div><button id="retry-display" class="secondary">Retry display</button><p id="bridge" role="status">Connecting to Even G2…</p>
 <div class="actions"><button id="record">Start question</button><button id="cancel" class="secondary">Cancel</button><button id="previous" aria-label="Previous answer page" class="secondary">↑</button><button id="next" aria-label="Next answer page" class="secondary">↓</button></div>
 <p class="hint">G2: tap to record, tap again to send · double tap to exit · swipe to read</p>
 <section aria-label="Listening mode"><label for="mode">Listening mode</label><select id="mode"><option value="manual">Manual · tap to ask</option><option value="continuous">Continuous G2 · live transcript + hints</option><option value="simulation">Continuous demo · synthetic PCM, no microphone</option></select><label for="speech-threshold">Speech sensitivity</label><select id="speech-threshold"><option value="300">Quiet speech</option><option value="600" selected>Normal</option><option value="1000">Noisy room</option></select><div class="actions"><button id="listen">Resume listening</button><button id="pause" class="secondary">Pause listening</button><button id="inject" class="secondary">Simulate speech segment</button></div><p id="listening" role="status"></p><p class="hint">Live transcript appears while speaking. After 2 seconds of silence, the final transcript goes to Beast. Hints appear automatically for 10 seconds each, then disappear. Keep each utterance under 30 seconds. Tap pauses/resumes; double tap exits.</p></section><form id="ask"><label for="question">Text question · also works without glasses</label><div class="row"><input id="question" maxlength="4000" placeholder="Co umí Beast G2?" required><button>Ask Beast</button></div></form>
+<section><h2>Continuous conversation setup</h2><label for="conversation-mode">Reply style</label><select id="conversation-mode"><option value="direct">Answer every utterance</option><option value="context">Contextual cues · experimental</option></select><label for="prep-notes">Prep notes · people, topic, goal</label><textarea id="prep-notes" maxlength="1500" placeholder="Who am I meeting? What do we need to decide? Relevant names and facts."></textarea><button id="apply-conversation" class="secondary">Apply conversation setup</button><p id="conversation-status">Session only. Apply while paused; changing setup resets model context.</p></section>
+<section><h2>Continuous hint history</h2><p>Last 20 completed answers in this session. Survives hint expiry and pause; closing/reloading clears it. Demo history is separate.</p><button id="export-history" class="secondary">Export conversation JSON</button><button id="clear-history" class="secondary">Delete hint history</button><div id="hint-history"></div><textarea id="history-json" hidden readonly aria-label="Conversation export"></textarea></section>
 <div class="detail"><h2>Transcript</h2><p id="transcript">Your spoken question will appear here.</p><h2>Answer</h2><p id="answer">Waiting for your first question.</p><p id="error" role="alert"></p></div></section>
 <aside><h2>Connection</h2><p>Direct Beast requires the company VPN on this phone. Keep Tailscale or WireGuard connected. Credentials stay in memory for this session.</p><form id="settings"><label for="transport">API connection</label><select id="transport"><option value="direct">Direct Beast API</option><option value="gateway">Custom gateway</option></select><label for="gateway">API base URL / gateway origin</label><input id="gateway" type="url" required placeholder="https://your-gateway.example.com"><label for="token">API key / gateway token</label><input id="token" type="password" autocomplete="off" required placeholder="Kept in memory for this session"><label for="chat-model">Chat model</label><input id="chat-model" value="beast/big" required><label for="stt-model">Speech model</label><input id="stt-model" value="whisper-live" required><label for="stt-prompt">Names / vocabulary (direct Beast only, optional)</label><input id="stt-prompt" maxlength="300" placeholder="Beast, Slush, names and technical terms"><label for="language">Speech language</label><select id="language"><option value="cs">Čeština</option><option value="en">English</option><option value="auto">Automatic</option></select><button>Apply connection</button></form><div class="actions"><button id="health" class="secondary">Test connection</button><button id="demo" class="secondary">Use local demo</button></div><p id="connection" role="status">Not tested</p><button id="clear" class="secondary">Clear conversation context</button><button id="exit" class="secondary">Exit on glasses</button><p class="hint">Demo uses a loopback gateway and simulated answers. It makes no Beast requests. Real G2 audio and Beast compatibility still require device testing.</p></aside></main>`
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -48,6 +50,7 @@ const activeContinuous = () => mode === 'simulation' ? simulation : continuous
 const controller = new AssistantController(measuredAudio, api, paint)
 const statusMonitor = new StatusMonitor()
 let stopDeviceStatus: (() => void) | undefined
+let historyRevision = ''
 let lastDiagnosticState = ''
 function paint() {
   const state = mode === 'manual' ? controller.state : activeContinuous().viewState(), view = hud(state, page); page = Math.min(page, view.count - 1)
@@ -64,7 +67,9 @@ function paint() {
   element('transcript').textContent = state.transcript || 'Your spoken question will appear here.'
   element('answer').textContent = state.answer || 'Waiting for your first question.'
   element('error').textContent = state.error
+  renderHistory()
   const busy = switchingMode || (mode === 'manual' ? ['starting', 'recording', 'transcribing', 'answering'].includes(state.phase) : !['paused', 'interrupted', 'error'].includes(listening.phase) || listening.microphone !== 'off')
+  for (const id of ['conversation-mode','prep-notes','apply-conversation']) (element(id) as HTMLInputElement).disabled = busy
   element<HTMLSelectElement>('speech-threshold').disabled = busy
   element<HTMLButtonElement>('listen').disabled = mode === 'manual' || busy
   element<HTMLButtonElement>('pause').disabled = mode === 'manual' || switchingMode
@@ -100,6 +105,29 @@ element('mode').addEventListener('change', async () => {
   await pauseAll()
   if (continuous.state.microphone !== 'off') { element<HTMLSelectElement>('mode').value = mode; switchingMode = false; paint(); return }
   mode = element<HTMLSelectElement>('mode').value as typeof mode; page = 0; switchingMode = false; paint()
+})
+function renderHistory() {
+  const archive = activeContinuous().archive, revision = `${mode}:${archive.revision}`
+  if (historyRevision === revision) return
+  historyRevision = revision
+  const list = element('hint-history'); list.replaceChildren()
+  for (const row of archive.snapshot().reverse()) {
+    const item = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('p')
+    summary.textContent = `${new Date(row.at).toLocaleTimeString()} · ${row.transcript.slice(0,90)}`
+    text.textContent = row.answer; item.append(summary, text); list.append(item)
+  }
+}
+element('apply-conversation').addEventListener('click', () => {
+  const config = { mode: element<HTMLSelectElement>('conversation-mode').value as 'direct' | 'context', notes: element<HTMLTextAreaElement>('prep-notes').value.trim() }
+  const ok = continuous.configureConversation(config) && simulation.configureConversation(config)
+  element('conversation-status').textContent = ok ? 'Applied for continuous mode. Notes stay in this session and go to the selected model with each final utterance.' : 'Pause listening before changing setup.'
+})
+element('clear-history').addEventListener('click', () => { activeContinuous().archive.clear(); element<HTMLTextAreaElement>('history-json').value = ''; element('history-json').hidden = true; renderHistory() })
+element('export-history').addEventListener('click', () => {
+  const value = activeContinuous().archive.export(), field = element<HTMLTextAreaElement>('history-json')
+  field.value = value; field.hidden = false
+  const url = URL.createObjectURL(new Blob([value], { type: 'application/json' })), link = document.createElement('a')
+  link.href = url; link.download = 'beast-conversation.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000)
 })
 element('speech-threshold').addEventListener('change', () => { const threshold = Number(element<HTMLSelectElement>('speech-threshold').value); continuous.setSpeechThreshold(threshold); simulation.setSpeechThreshold(threshold) })
 element('listen').addEventListener('click', () => { if (!switchingMode && mode !== 'manual') void activeContinuous().start() })
