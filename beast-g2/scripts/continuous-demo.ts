@@ -10,5 +10,5 @@ try {
   console.log(`Visible: ${c.state.reply?.answer}`)
   c.showLatest()
   console.log(`Latest: ${c.state.reply?.answer}`)
-  if (c.state.ignored !== 3 || !c.state.reply?.answer.includes('SIMULATED')) throw new Error('Demo contract failed')
+  if (c.state.ignored !== 0 || !c.state.reply?.answer.includes('SIMULATED')) throw new Error('Demo contract failed')
 } finally { await c.pause(); console.log(`Microphone: ${c.state.microphone} (${c.state.phase}); no device or network used.`) }

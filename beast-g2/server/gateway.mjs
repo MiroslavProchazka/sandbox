@@ -35,7 +35,7 @@ export function validateChat(input) {
   if (!input || typeof input.text !== 'string' || !input.text.trim() || input.text.length > 4000) throw new ApiError(400, 'invalid_text', 'Question must contain 1–4000 characters.');
   const history = input.history ?? [];
   if (!Array.isArray(history) || history.length > 12 || history.some(x => !x || !['user', 'assistant'].includes(x.role) || typeof x.content !== 'string' || x.content.length > 4000) || history.reduce((n, x) => n + x.content.length, 0) > 24000) throw new ApiError(400, 'invalid_history', 'Conversation context exceeds limits.');
-  return [{ role: 'system', content: 'You answer questions on smart glasses. Reply in the language of the question. Lead with the answer. Use plain text, no Markdown. Keep the answer within 3 short sentences unless the user explicitly asks for detail. Do not claim access to current information or tools you do not have.' }, ...history, { role: 'user', content: input.text.trim() }];
+  return [{ role: 'system', content: 'You answer questions on smart glasses. Reply in the language of the question. Lead with the answer. Use plain text, no Markdown. Keep the answer within 2 short sentences, ideally under 200 characters, as a glanceable hint. Do not claim access to current information or tools you do not have.' }, ...history, { role: 'user', content: input.text.trim() }];
 }
 // Incremental SSE parsing supports CRLF, split UTF-8, multiple data lines and final unterminated frames.
 export async function* readSSE(stream) {

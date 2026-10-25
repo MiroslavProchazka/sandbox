@@ -41,7 +41,7 @@ export class BeastClient {
     try { const result = await response.json() as { text?: string }; if (typeof result.text !== 'string' || result.text.length > 4000) throw new Error('Invalid Beast transcript.'); return result.text.trim() } catch (error) { fail(error); throw error } finally { release() }
   }
   async chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void) {
-    const { response, release, fail } = await this.request('chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: this.settings().chatModel || 'beast/big', stream: true, max_tokens: 512, messages: [{ role: 'system', content: 'Answer the question in its language. Use plain text and at most three short sentences for smart glasses. Do not claim live information or tools you do not have.' }, ...history, { role: 'user', content: text }] }) }, signal)
+    const { response, release, fail } = await this.request('chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: this.settings().chatModel || 'beast/big', stream: true, max_tokens: 512, messages: [{ role: 'system', content: 'Answer the question in its language. Use plain text and at most two short sentences, ideally under 200 characters, as a glanceable smart-glasses hint. Do not claim live information or tools you do not have.' }, ...history, { role: 'user', content: text }] }) }, signal)
     if (!response.body) { const error = new Error('Beast returned no stream.'); fail(error); release(); throw error }
     const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', data = '', complete = false, chars = 0
     const event = () => {

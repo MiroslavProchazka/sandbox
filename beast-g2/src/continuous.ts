@@ -4,43 +4,73 @@ import type { Turn } from './api'
 import { Segmenter, type VadOptions } from './vad'
 export type ListeningPhase = 'paused' | 'starting' | 'listening' | 'transcribing' | 'answering' | 'interrupted' | 'error'
 export type Reply = { transcript: string; answer: string }
-export type ContinuousState = { phase: ListeningPhase; microphone: 'off' | 'on' | 'unknown'; queued: number; dropped: number; ignored: number; notice: string; error: string; reply?: Reply; latest?: Reply; unread: number; repliesDropped: number }
-export function normalizeQuestion(text: string) { return text.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim() }
-/** Conservative Czech/English heuristic, not semantic intent or speaker recognition. */
-export function isQuestion(text: string, addressedOnly = false) {
-  const normalized = normalizeQuestion(text).replace(/^(prosim te|prosim vas|prosim|please|excuse me)\s+/, '')
-  if (normalized.length < 4 || normalized.length > 4000) return false
-  if (/^(who knows|kdo vi)\b|\b(you know|isn t it|ze jo|neni li|neni to tak)\s*$/.test(normalized)) return false
-  if (/[,;]\s*right\s*[?.!]*$/i.test(text)) return false
-  const addressed = /^(hey |ok )?beast\b/.test(normalized)
-  if (addressedOnly) return addressed && normalized.split(' ').length >= 3
-  if (addressed) return normalized.split(' ').length >= 3
-  return /^(co|jak|proc|kdy|kde|kam|kdo|kolik|jaky|jaka|jake|ktery|ktera|ktere|muzes|muzete|je|jsou|ma|mam|what|how|why|when|where|who|which|can|could|should|is|are|do|does)\b/.test(normalized) && (normalized.split(' ').length >= 3 || text.includes('?'))
-}
-export function sameQuestion(a: string, b: string) {
-  if (a === b) return true
-  const left = new Set(a.split(' ')), right = new Set(b.split(' '))
-  if (Math.min(left.size, right.size) < 6) return false
-  const shared = [...left].filter(word => right.has(word)).length
-  return shared / new Set([...left, ...right]).size >= 0.85
-}
+export type ContinuousState = { phase: ListeningPhase; microphone: 'off' | 'on' | 'unknown'; queued: number; dropped: number; ignored: number; notice: string; error: string; reply?: Reply; latest?: Reply; unread: number; repliesDropped: number; transcript: string; streaming: string; hintPage: number }
 export class ContinuousController {
-  state: ContinuousState = { phase: 'paused', microphone: 'off', queued: 0, dropped: 0, ignored: 0, notice: '', error: '', unread: 0, repliesDropped: 0 }
+  state: ContinuousState = { phase: 'paused', microphone: 'off', queued: 0, dropped: 0, ignored: 0, notice: '', error: '', unread: 0, repliesDropped: 0, transcript: '', streaming: '', hintPage: 0 }
   private replies: Reply[] = []
   private vad: Segmenter
   private generation = 0
   private starting = false
   private stopping = 0
   private running = false
-  private queue: { wav: Uint8Array<ArrayBuffer>; at: number }[] = []
+  private queue: { wav: Uint8Array<ArrayBuffer>; at: number; utterance: number }[] = []
   private request?: AbortController
   private history: Turn[] = []
-  private seen = new Map<string, number>()
+  private previewRequest?: AbortController
+  private previewPending?: Uint8Array<ArrayBuffer>
+  private utterance = 0
+  private hintTimer?: ReturnType<typeof setInterval>
+  private hintStarted = 0
+  private hintSpace?: () => void
   private enabled = false
   private lastAudio = 0
   private watchdog?: ReturnType<typeof setInterval>
-  constructor(private audio: AudioPort, private api: AssistantPort, private changed: () => void, private options: { now?: () => number; vad?: Partial<VadOptions>; addressedOnly?: boolean; watchdogMs?: number } = {}) {
-    this.vad = new Segmenter(wav => this.enqueue(wav), options.vad)
+  constructor(private audio: AudioPort, private api: AssistantPort, private changed: () => void, private options: { now?: () => number; vad?: Partial<VadOptions>; watchdogMs?: number; replyMs?: number; requestMs?: number; previews?: boolean } = {}) {
+    this.vad = new Segmenter(wav => { this.cancelPreview(); this.enqueue(wav) }, options.vad,
+      wav => { if (options.previews !== false) { this.previewPending = wav; void this.preview() } },
+      () => { this.cancelPreview(); this.set({ transcript: '', error: '' }) },
+      () => { this.cancelPreview(); this.set({ error: 'Speech exceeded 30 seconds. Pause for 2 seconds, then try a shorter utterance.' }) })
+  }
+  private cancelPreview() { this.utterance++; this.previewPending = undefined; this.previewRequest?.abort(); this.previewRequest = undefined }
+  private async bounded<T>(work: (signal: AbortSignal) => Promise<T>, request: AbortController, ms: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let abort!: () => void
+    const stopped = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(request.signal.reason ?? new DOMException('Cancelled', 'AbortError'))
+      request.signal.addEventListener('abort', abort, { once: true })
+      if (request.signal.aborted) abort()
+      timer = setTimeout(() => request.abort(new DOMException('Beast response timed out. Try again.', 'TimeoutError')), ms)
+    })
+    try { return await Promise.race([stopped, work(request.signal)]) }
+    finally { clearTimeout(timer); request.signal.removeEventListener('abort', abort) }
+  }
+  private async preview() {
+    if (this.previewRequest || !this.previewPending || !this.enabled) return
+    const wav = this.previewPending; this.previewPending = undefined
+    const request = new AbortController(), id = this.utterance, generation = this.generation
+    this.previewRequest = request
+    try {
+      const text = await this.bounded(signal => this.api.transcribe(wav, signal), request, 8000)
+      if (!request.signal.aborted && id === this.utterance && generation === this.generation && this.enabled) this.set({ transcript: text.trim() })
+    } catch { /* Final transcription is authoritative; transient previews may fail. */ }
+    finally { if (this.previewRequest === request) { this.previewRequest = undefined; void this.preview() } }
+  }
+  private showReply(reply: Reply) {
+    this.hintSpace?.(); this.hintSpace = undefined
+    clearInterval(this.hintTimer); this.hintStarted = this.now()
+    this.set({ reply, hintPage: 0, streaming: '', latest: this.replies[0], unread: this.replies.length })
+    this.hintTimer = setInterval(() => this.tickHint(), 250)
+    diagnostics.record('continuous', 'answer.shown', { chars: reply.answer.length })
+  }
+  tickHint() {
+    if (!this.state.reply) return
+    const elapsed = this.now() - this.hintStarted, duration = this.options.replyMs ?? 10000
+    if (elapsed >= duration) {
+      clearInterval(this.hintTimer); diagnostics.record('continuous', 'answer.expired')
+      const next = this.replies.shift()
+      if (next) this.showReply(next)
+      else this.set({ reply: undefined, hintPage: 0, latest: undefined, unread: 0, notice: 'Listening · next hint appears automatically.' })
+    } else this.set({ hintPage: Math.floor(elapsed / 2500) })
   }
   checkAudioHealth() {
     if (this.enabled && !this.starting && this.now() - this.lastAudio > (this.options.watchdogMs ?? 8000)) return this.pause(true, 'No G2 audio received. Check connection, then resume explicitly.')
@@ -56,7 +86,7 @@ export class ContinuousController {
       await this.audio.start()
       if (id !== this.generation) { await this.audio.stop(); return }
       this.lastAudio = this.now()
-      this.set({ microphone: 'on', phase: 'listening', notice: 'Listening · segmented Whisper, automatic question filter' })
+      this.set({ microphone: 'on', phase: 'listening', notice: 'Listening · live transcript, send after 2 seconds of silence' })
       this.watchdog = setInterval(() => { void this.checkAudioHealth() }, 1000)
     } catch (error) {
       let microphone: ContinuousState['microphone'] = 'off'
@@ -68,7 +98,7 @@ export class ContinuousController {
   private enqueue(wav: Uint8Array<ArrayBuffer>) {
     if (!this.enabled) return
     if (this.queue.length >= 2) { this.queue.shift(); this.state.dropped++; diagnostics.record('continuous', 'segment.dropped', { dropped: this.state.dropped }, 'warn') }
-    diagnostics.record('continuous', 'segment.queued', { bytes: wav.length, queued: this.queue.length + 1 }); this.queue.push({ wav, at: this.now() }); this.set({ queued: this.queue.length })
+    diagnostics.record('continuous', 'segment.queued', { bytes: wav.length, queued: this.queue.length + 1 }); this.queue.push({ wav, at: this.now(), utterance: this.utterance }); this.set({ queued: this.queue.length })
     void this.drain()
   }
   private async drain() {
@@ -76,46 +106,39 @@ export class ContinuousController {
     this.running = true
     try {
       while (this.enabled && this.queue.length) {
+        if (this.replies.length >= 3) { await new Promise<void>(resolve => { this.hintSpace = resolve }); if (!this.enabled) break }
         const item = this.queue.shift()!, id = this.generation
         this.set({ queued: this.queue.length })
         if (this.now() - item.at > 30000) { this.set({ dropped: this.state.dropped + 1, notice: 'Skipped stale audio segment.' }); continue }
         const request = new AbortController(); this.request = request
-        let questionKey: string | undefined, succeeded = false
+        let answer = ''
         try {
           this.set({ phase: 'transcribing', error: '' })
-          const text = (await this.api.transcribe(item.wav, request.signal)).trim()
+          const text = (await this.bounded(signal => this.api.transcribe(item.wav, signal), request, this.options.requestMs ?? 20000)).trim()
           if (id !== this.generation || !this.enabled) continue
-          const key = normalizeQuestion(text), now = this.now()
-          for (const [key, at] of this.seen) if (now - at >= 90000) this.seen.delete(key)
-          const duplicate = [...this.seen.keys()].some(previous => sameQuestion(previous, key))
-          if (!isQuestion(text, this.options.addressedOnly) || duplicate) {
-            diagnostics.record('continuous', 'transcript.ignored', { chars: text.length, ignored: this.state.ignored + 1 }); this.set({ ignored: this.state.ignored + 1, notice: duplicate ? 'Duplicate question skipped.' : 'Ordinary or rhetorical speech skipped (heuristic).' }); continue
-          }
-          questionKey = key; this.seen.set(key, now); if (this.seen.size > 64) this.seen.delete(this.seen.keys().next().value!)
-          let answer = ''
+          if (item.utterance === this.utterance) this.set({ transcript: text })
+          if (!text) { this.set({ ignored: this.state.ignored + 1, notice: 'No speech recognized.' }); continue }
           this.set({ phase: 'answering', notice: 'Answering · microphone stays on; at most two queued segments.' })
-          await this.api.chat(text, [...this.history], request.signal, delta => {
-            if (id !== this.generation) return
+          await this.bounded(signal => this.api.chat(text, [...this.history], signal, delta => {
+            if (id !== this.generation || request.signal.aborted) return
             if (answer.length + delta.length > 12000) { request.abort(); throw new Error('Answer exceeds limit.') }
-            answer += delta
-          })
+            answer += delta; this.set({ streaming: answer })
+          }), request, this.options.requestMs ?? 30000)
           if (id !== this.generation || !this.enabled) continue
           if (!answer.trim()) throw new Error('Empty answer.')
           this.history.push({ role: 'user', content: text }, { role: 'assistant', content: answer.slice(0, 4000) }); this.history = this.history.slice(-6)
-          // First reply appears automatically. Later replies wait for explicit reveal, preserving reading/page position.
-          diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { transcript: text, answer }; succeeded = true
+          // Each completed hint gets ten seconds, then the next advances automatically.
+          diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { transcript: text, answer }
           if (this.state.reply) {
-            if (this.replies.length === 3) { this.replies.shift(); this.state.repliesDropped++; diagnostics.record('continuous', 'answer.dropped', { dropped: this.state.repliesDropped }, 'warn') }
             this.replies.push(reply)
-            this.set({ latest: this.replies[0], unread: this.replies.length, notice: `${this.replies.length} answers waiting · show next when finished reading.` })
-          } else this.set({ reply, notice: 'Answer ready · listening continues.' })
+            this.set({ latest: this.replies[0], unread: this.replies.length, streaming: '', notice: `${this.replies.length} hints waiting · advance automatically.` })
+          } else this.showReply(reply)
         } catch (error) {
           if (id === this.generation && this.enabled) {
-            // Failed answers may be retried; successful questions stay deduplicated.
-            diagnostics.record('continuous', 'segment.failed', { code: 'operation_failed' }, 'error'); this.set({ error: String(error), notice: 'Segment failed; listening continues. No automatic audio retry.' })
+            // Surface failures and release the pipeline; partial output is not a completed hint.
+            diagnostics.record('continuous', 'segment.failed', { code: 'operation_failed' }, 'error'); this.set({ streaming: '', error: String(error), notice: 'Segment failed; listening continues. No automatic audio retry.' })
           }
         } finally {
-          if (questionKey && !succeeded) this.seen.delete(questionKey)
           if (this.request === request) this.request = undefined
           if (id === this.generation && this.enabled) this.set({ phase: 'listening' })
         }
@@ -124,14 +147,13 @@ export class ContinuousController {
   }
   async pause(interrupted = false, notice = 'Paused · microphone off; resume explicitly.') {
     const id = ++this.generation; this.enabled = false; this.stopping++
-    clearInterval(this.watchdog); this.request?.abort(); this.queue = []; this.vad.reset()
-    this.set({ phase: interrupted ? 'interrupted' : 'paused', microphone: this.state.microphone === 'off' ? 'off' : 'unknown', queued: 0, notice, error: '' })
+    this.hintSpace?.(); this.hintSpace = undefined; clearInterval(this.watchdog); clearInterval(this.hintTimer); this.replies = []; this.cancelPreview(); this.request?.abort(); this.queue = []; this.vad.reset()
+    this.set({ phase: interrupted ? 'interrupted' : 'paused', microphone: this.state.microphone === 'off' ? 'off' : 'unknown', queued: 0, notice, error: '', reply: undefined, latest: undefined, unread: 0, transcript: '', streaming: '' })
     try { await this.audio.stop(); if (id === this.generation) this.set({ microphone: 'off' }) }
     catch (error) { if (id === this.generation) this.set({ phase: 'error', error: `Microphone stop failed; retry pause: ${String(error)}` }) }
     finally { this.stopping-- }
   }
-  showLatest() { const reply = this.replies.shift(); if (reply) this.set({ reply, latest: this.replies[0], unread: this.replies.length }) }
-  setAddressedOnly(value: boolean) { if (this.enabled || this.starting || this.stopping) return false; this.options.addressedOnly = value; return true }
-  clearHistory() { this.history = []; this.seen.clear() }
-  viewState(): State { return { phase: this.state.reply ? 'done' : this.state.phase === 'starting' ? 'starting' : this.state.phase === 'error' ? 'error' : this.state.phase === 'interrupted' ? 'interrupted' : 'idle', transcript: this.state.reply?.transcript ?? '', answer: this.state.reply?.answer ?? '', error: this.state.error, seconds: 0 } }
+  showLatest() { const reply = this.replies.shift(); if (reply) this.showReply(reply) }
+  clearHistory() { this.history = [] }
+  viewState(): State { return { phase: this.state.reply ? 'done' : this.state.phase === 'starting' ? 'starting' : this.state.phase === 'error' ? 'error' : this.state.phase === 'interrupted' ? 'interrupted' : 'idle', transcript: this.state.transcript, answer: this.state.reply?.answer ?? this.state.streaming, error: this.state.error, seconds: 0 } }
 }

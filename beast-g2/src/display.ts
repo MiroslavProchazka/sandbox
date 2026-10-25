@@ -40,3 +40,14 @@ export class LatestDisplay {
     this.running = false
   }
 }
+
+/** Live transcript and a separate hint share the lens; continuous mode never needs swipes. */
+export function continuousHud(state: import('./continuous').ContinuousState) {
+  const lines = (text: string) => pages(text).flatMap(page => page.split('\n'))
+  const transcript = lines(state.transcript || (state.microphone === 'on' ? 'Listening…' : 'Microphone off')).slice(-2).join('\n')
+  const answer = state.reply?.answer || state.streaming
+  const hint = lines(state.error ? `Error: ${state.error}` : answer || (state.phase === 'transcribing' ? 'Transcribing…' : state.phase === 'answering' ? 'Beast is thinking…' : ''))
+  const count = Math.max(1, Math.ceil(hint.length / 3))
+  const index = Math.min(state.hintPage, count - 1)
+  return `YOU / ${state.microphone.toUpperCase()}\n${transcript}\n\n${state.error ? 'ERROR' : state.streaming && !state.reply ? 'BEAST …' : 'BEAST'}\n${hint.slice(index * 3, index * 3 + 3).join('\n')}`
+}

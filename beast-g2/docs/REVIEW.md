@@ -2,6 +2,10 @@
 
 25. října 2026. Rozsah: klient, Even SDK adaptér, manuální i kontinuální režim, PCM/VAD, přepis a chat, brána, testy, balení a diagnostika. Podklad: sloučený PR #3 (`4a76fd0`), přímý Beast adaptér (`a72a374`) a následné lokální změny diagnostiky. Toto je review korektnosti a provozní připravenosti, nikoli samostatný bezpečnostní audit.
 
+## Aktualizace 0.3 podle testování
+
+Průběžný přepis, finalizace po 2 s ticha a automatické desetisekundové hinty nahrazují filtr otázek a ruční inbox. R3 je odstraněn z aktivního toku (každý neprázdný přepis jde do chatu). R5 má automatické FIFO a backpressure bez zahození dokončených odpovědí. R4 zatím řeší explicitní odmítnutí promluvy delší než 30 s místo odeslání neúplných 12s segmentů. R6 rozšířeno o události publikace a expirace hintu; doručení na hardware ověřují samostatné SDK zápisy. Podrobnosti a zbývající limity: CONTINUOUS.md.
+
 ## Stav první opravné iterace po PR #4
 
 - R1 částečně opraveno: mikrofonní operace vrátí callerovi timeout po 8 s, ale podkladová fronta zůstává serializovaná. Controller zachová neznámý stav a vyžaduje úspěšnou explicitní pauzu před novým startem. Pozdní start následovaný stopem je pokryt testem. Display po timeoutu zavře svou frontu a vyžádá znovuotevření pluginu. Timeout nezaručuje fyzické vypnutí mikrofonu. Čekání na bridge/startup stránku a plná obnova session zůstávají otevřené.
