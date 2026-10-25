@@ -40,3 +40,26 @@ test('direct model health rejects an unavailable configured chat model', async t
   globalThis.fetch = async () => Response.json({ data: [{ id: 'beast/small' }] })
   await assert.rejects(new BeastClient(() => settings).health(), /beast\/big is missing/)
 })
+test('optional vocabulary is sent only as a bounded transcription prompt', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async (_input, init) => {
+    const form = init!.body as FormData
+    assert.equal((form.get('prompt') as string).length, 300)
+    assert.equal(form.get('language'), 'cs')
+    return Response.json({ text: 'Beast' })
+  }
+  await new BeastClient(() => ({ ...settings, sttPrompt: 'a'.repeat(400) })).transcribe(new Uint8Array(50), new AbortController().signal)
+})
+test('direct Beast cue mode requests structured cues without changing default chat', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async (_input, init) => {
+    assert.match(JSON.parse(init!.body as string).messages[0].content, /JSON object/)
+    return new Response('data: {"choices":[{"delta":{"content":"{\\"show\\":false}"},"finish_reason":"stop"}]}\n\n')
+  }
+  let output = ''; await new BeastClient(() => settings).chat('Conversation', [], new AbortController().signal, x => { output += x }, { format:'cue' })
+  assert.equal(output, '{"show":false}')
+})
+
+test('direct Beast refuses web instead of pretending to search', async () => {
+  await assert.rejects(new BeastClient(()=>settings).chat('question',[],new AbortController().signal,()=>{}, {webQuery:'question'}), /custom gateway/)
+})

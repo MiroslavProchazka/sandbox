@@ -1,9 +1,9 @@
 import { PcmBuffer } from './audio'
-import type { Turn } from './api'
+import type { Turn, ChatOptions } from './api'
 export type Phase = 'idle' | 'starting' | 'recording' | 'transcribing' | 'answering' | 'done' | 'error' | 'interrupted'
 export type State = { phase: Phase; transcript: string; answer: string; error: string; seconds: number }
 export interface AudioPort { start(): Promise<void>; stop(): Promise<void> }
-export interface AssistantPort { transcribe(wav: Uint8Array<ArrayBuffer>, signal: AbortSignal): Promise<string>; chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void): Promise<void> }
+export interface AssistantPort { transcribe(wav: Uint8Array<ArrayBuffer>, signal: AbortSignal): Promise<string>; chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void, options?: ChatOptions): Promise<void> }
 export class AssistantController {
   state: State = { phase: 'idle', transcript: '', answer: '', error: '', seconds: 0 }
   private pcm = new PcmBuffer()

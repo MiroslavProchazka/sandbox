@@ -9,7 +9,7 @@ export function pcmFrame(speech: boolean) {
 export function simulateUtterance(controller: ContinuousController) {
   for (let i = 0; i < 15; i++) controller.onPcm(pcmFrame(false))
   for (let i = 0; i < 30; i++) controller.onPcm(pcmFrame(true))
-  for (let i = 0; i < 35; i++) controller.onPcm(pcmFrame(false))
+  for (let i = 0; i < 105; i++) controller.onPcm(pcmFrame(false))
 }
 export function createContinuousDemo(changed: () => void) {
   let index = 0
@@ -17,9 +17,15 @@ export function createContinuousDemo(changed: () => void) {
   const api: AssistantPort = {
     async transcribe(_wav, signal) { signal.throwIfAborted(); return transcripts[index++ % transcripts.length] },
     async chat(text, _history, signal, delta) {
+      if (text.startsWith('You support the wearer')) { signal.throwIfAborted(); delta(JSON.stringify({ show: true, hint: '[DEMO] Ujasni si hlavní cíl rozhovoru.', detail: 'Simulovaná kontextová nápověda. Zeptej se na požadovaný výsledek a ověř, zda mu obě strany rozumějí stejně.' })); return }
       signal.throwIfAborted(); delta(`[SIMULATED] ${text} `)
       await Promise.resolve(); signal.throwIfAborted(); delta('Toto je demo průběžného poslechu bez mikrofonu a bez Beast volání.')
     }
   }
-  return new ContinuousController({ async start() {}, async stop() {} }, api, changed)
+  let silence: ReturnType<typeof setInterval> | undefined
+  const controller = new ContinuousController({
+    async start() { silence = setInterval(() => controller.onPcm(pcmFrame(false)), 20) },
+    async stop() { clearInterval(silence) }
+  }, api, changed)
+  return controller
 }

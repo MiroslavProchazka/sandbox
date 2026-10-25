@@ -3,7 +3,7 @@ export type Stage = 'app' | 'sdk' | 'mic' | 'audio' | 'stt' | 'chat' | 'health' 
 export type Details = { status?: number; durationMs?: number; bytes?: number; frames?: number; queued?: number; dropped?: number; ignored?: number; chars?: number; ageMs?: number; rms?: number; peak?: number; phase?: string; transport?: string; code?: string }
 export type DiagnosticEvent = { sequence: number; at: string; elapsedMs: number; level: Level; stage: Stage; event: string; traceId?: string; details: Details }
 const numeric = ['status', 'durationMs', 'bytes', 'frames', 'queued', 'dropped', 'ignored', 'chars', 'ageMs', 'rms', 'peak'] as const
-const events = new Set(['request.start','request.end','response.headers','state.changed','bridge.waiting','bridge.connected','bridge.failed','diagnostics.cleared','runtime.error','runtime.rejection','visibility.changed','session.started','pcm.received','segment.queued','segment.dropped','transcript.ignored','answer.ready','segment.failed','dispose.stop_failed'])
+const events = new Set(['request.start','request.end','response.headers','state.changed','bridge.waiting','bridge.connected','bridge.failed','diagnostics.cleared','runtime.error','runtime.rejection','visibility.changed','session.started','pcm.received','segment.queued','segment.dropped','transcript.ignored','answer.ready','answer.shown','answer.expired','answer.dropped','segment.failed','dispose.stop_failed'])
 const categories = new Set(['direct','gateway','idle','starting','recording','transcribing','answering','done','error','interrupted','paused','listening','off','on','unknown','manual','continuous','simulation','network','timeout','cancelled','invalid_response','operation_failed','uncaught_error','unhandled_rejection','bridge_unavailable','hidden','visible'])
 /** Strict metadata allowlist: no prompts, transcripts, answers, PCM, URLs, headers or exception messages. */
 function safeDetails(input: Details) {
@@ -31,7 +31,7 @@ export class Diagnostics {
     return { id, mark: (event: string, extra: Details = {}) => this.record(stage, event, extra, 'info', id), end: (level: Level = 'info', extra: Details = {}) => { if (ended) return; ended = true; this.record(stage, 'request.end', { ...details, ...extra, durationMs: Date.now() - started }, level, id) } }
   }
   snapshot() { return structuredClone(this.events) }
-  export() { return JSON.stringify({ format: 'beast-g2-diagnostics-v1', version: '0.2.0', buildId: import.meta.env?.VITE_BUILD_ID || 'local-development', sdk: '0.0.16', exportedAt: new Date().toISOString(), capacity: this.capacity, events: this.snapshot() }, null, 2) }
+  export() { return JSON.stringify({ format: 'beast-g2-diagnostics-v1', version: '0.4.0', buildId: import.meta.env?.VITE_BUILD_ID || 'local-development', sdk: '0.0.16', exportedAt: new Date().toISOString(), capacity: this.capacity, events: this.snapshot() }, null, 2) }
   clear() { this.events = []; this.record('app', 'diagnostics.cleared') }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener) }
 }

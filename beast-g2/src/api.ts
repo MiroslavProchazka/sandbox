@@ -1,5 +1,8 @@
+export type WebSource = { id: number; title: string; url: string; published?: string }
+export type WebEvidence = { sources: WebSource[]; retrievedAt: string }
+export type ChatOptions = { format?: 'cue'; webQuery?: string; onSources?: (evidence: WebEvidence) => void }
 import { diagnostics, errorCode, type Stage } from './diagnostics'
-export type Settings = { gateway: string; token: string; language: 'cs' | 'en' | 'auto'; transport?: 'gateway' | 'direct'; chatModel?: string; sttModel?: string }
+export type Settings = { gateway: string; token: string; language: 'cs' | 'en' | 'auto'; transport?: 'gateway' | 'direct'; chatModel?: string; sttModel?: string; sttPrompt?: string }
 export type Turn = { role: 'user' | 'assistant'; content: string }
 export function gatewayUrl(base: string, path: string) {
   const url = new URL(base)
@@ -38,14 +41,19 @@ export class GatewayClient {
     const { response, release, fail } = await this.request(`/api/transcribe?language=${this.settings().language}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: new Blob([wav], { type: 'audio/wav' }) }, signal)
     try { const data = await response.json() as { text?: string }; if (typeof data.text !== 'string') throw new Error('Invalid transcript response.'); return data.text } catch (error) { fail(error); throw error } finally { release() }
   }
-  async chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void) {
-    const { response, release, fail } = await this.request('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, history }) }, signal)
+  async chat(text: string, history: Turn[], signal: AbortSignal, delta: (text: string) => void, options?: ChatOptions) {
+    const { response, release, fail } = await this.request('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, history, format: options?.format, webQuery: options?.webQuery }) }, signal)
     if (!response.body) { const error = new Error('Gateway returned no response stream.'); fail(error); release(); throw error }
     const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '', completed = false
     const consume = (line: string) => {
       if (completed || !line.trim()) return
-      const event = JSON.parse(line) as { type: string; text?: string; message?: string; requestId?: string }
+      const event = JSON.parse(line) as { type: string; text?: string; message?: string; requestId?: string; sources?: WebSource[]; retrievedAt?: string }
       if (event.type === 'delta' && typeof event.text === 'string') delta(event.text)
+      if (event.type === 'sources') {
+        if (!Array.isArray(event.sources) || !event.sources.length || event.sources.length > 5 || typeof event.retrievedAt !== 'string') throw new Error('Invalid web sources.')
+        for (const source of event.sources) { const url = new URL(source.url); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || typeof source.title !== 'string' || source.title.length > 200 || !Number.isInteger(source.id)) throw new Error('Invalid web source.') }
+        options?.onSources?.({ sources: event.sources, retrievedAt: event.retrievedAt })
+      }
       if (event.type === 'done') completed = true
       if (event.type === 'error') throw new Error(`${event.message || 'Gateway stream failed.'} [${event.requestId || 'no-id'}]`)
     }

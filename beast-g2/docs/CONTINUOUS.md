@@ -1,46 +1,38 @@
-# Continuous listening and automatic replies (experimental)
+# Changes in 0.3.2
 
-Implemented on `feat/beast-g2`, entirely in cloud. Manual tap-to-record remains the default. This feature produces **text replies on G2**, not spoken/TTS playback. There is no claim of feature parity with Aside or of continuous operation while the phone is locked.
+On real G2, the ten-second hint timer starts only after LatestDisplay receives a successful SDK write for the matching reply ID. Repeated/stale acknowledgements cannot reset or start another hint's timer. An unresolved write times out without starting another native write or acknowledging late resolution. Transient rejections retry at most twice; Retry display requeues the current frame, while a timed-out native session requires reopening. SDK success is an acknowledgement, not physical proof that the wearer read the text.
 
-## Controls
+Hints now use one static three-line view (overflow is marked with an ellipsis), with full text available on the phone during the hint lifetime. An error from a newer request does not obscure an already delivered hint. No automatic page movement.
 
-Select **Continuous G2**, select the reply filter, then **Resume listening**. The real mode requests only the SDK's glasses microphone. **Pause listening**, Cancel or double tap stop capture and abort current work; queued/partial audio is discarded. Single tap pauses/resumes continuous mode. A failed microphone shutdown is shown as **UNKNOWN**, and restart is blocked until a subsequent Pause succeeds.
+Speech sensitivity offers Quiet speech / Normal / Noisy room thresholds and can change only while capture is paused. The optional direct-mode vocabulary field sends at most 300 characters as the transcription `prompt`; provider support must be checked, so leave it empty if the server rejects it. This is configuration support, not a measured accuracy improvement. Actual streaming STT remains pending a documented backend protocol; cumulative HTTP previews continue.
 
-The HUD and phone show microphone on/off/unknown and processing state separately: the microphone stays on while transcribing/answering. First completed reply appears automatically. Later completed replies occupy one replaceable latest-result slot; **Show latest answer**, or swipe next from the last page on G2, reveals the newest reply and resets pagination. Pending/dropped/skipped counts are visible on the phone. Incoming inference and deltas never replace an answer being read.
+The host phone must be on the network/VPN required by the configured private endpoint. General Internet availability does not establish provider reachability. Model aliases may change; choose based on measured latency, not the words big/small.
 
-On page hide, visibility loss, SDK interruption or missing PCM for eight seconds, capture is interrupted and must be resumed explicitly. Received silence PCM counts as a healthy connection; lack of frames does not. No automatic background restart or audio replay occurs.
+Validation: 60 tests plus TypeScript/Vite build; physical G2 and STT quality still require device evaluation.
 
-## Audio and inference limits
+---
 
-- Mono 16 kHz PCM16 is reconstructed into 20 ms frames across arbitrary/odd SDK packet boundaries.
-- RMS threshold 600/32768, 300 ms pre-roll, 60 ms speech onset, minimum 300 ms voiced audio, 600 ms ending silence; configurable through Segmenter options. These values are defaults needing G2 calibration, not measurements of real hardware.
-- Hard segment cap 12 seconds, canonical bounded WAV. A long utterance splits with a short retained pre-roll overlap. No real-time Whisper protocol is assumed; each segment is a separate multipart transcription using the configured gateway STT model (default `whisper-live`).
-- One STT/chat pipeline at a time, at most two pending WAV segments. On overflow the oldest pending segment is dropped in favor of fresh speech. Pending segments older than 30 seconds are dropped. Active inference is allowed to finish when new speech arrives; it is aborted by Pause/Cancel/interruption, not by new speech.
-- Client request budget remains 95 seconds per STT/chat call. Processing waits for a cancelled adapter to settle before starting another pipeline; remote inference cancellation is provider-dependent. New capture can resume, but a broken/noncooperative custom adapter may delay queued work.
-- Six history turns, maximum 12,000 answer characters, one visible answer and one newest pending answer. Audio is not persisted. Queue limits bound memory, not API billing or accuracy.
+# Continuous G2 0.3
 
-## Question selection
+The glasses microphone streams PCM16 mono at 16 kHz. VAD uses an RMS speech threshold (600), not literal zero amplitude. Speech ending is 2,000 ms of below-threshold audio. A short pause does not split the utterance. Missing PCM remains a connection failure, not synthetic silence.
 
-Whisper receives **all VAD-selected speech segments** in continuous mode, including speech which may later be ignored. Only accepted question text is sent to chat.
+While speech continues, cumulative WAV snapshots are offered to Whisper every second, with one in-flight preview and one replaceable pending snapshot. This is incremental HTTP transcription, not a native streaming Whisper protocol: first words arrive after about one second plus provider latency. Preview results never trigger chat. Finalization cancels previews and runs an authoritative final transcription. Utterance and session guards discard late preview responses.
 
-The default deterministic Czech/English heuristic accepts likely question starts and Beast-addressed requests, rejecting a small list of obvious conversational/rhetorical phrases. **Only speech starting with Beast** is an optional stricter filter. This is not semantic intent detection, wake-word acoustics, diarization or speaker identification. It will miss some real questions and accept some ordinary/rhetorical speech. Simultaneous speakers arrive as one mono mix and cannot be separated by this VAD.
+Every nonempty final transcript goes to Beast, including statements and repeated questions. The old question heuristic and deduplication no longer suppress speech. The lens has separate transcript and hint areas. Chat deltas show immediately when no older hint occupies the hint area. Completed hints get ten seconds from publication to the UI, then expire and automatically reveal the next. Long hints advance their three-line viewport every 2.5 seconds; the full answer remains visible on the phone during its hint lifetime. Prompts request two short sentences, ideally under 200 characters. Extremely long provider answers may not fit all pages in ten seconds.
 
-Duplicate accepted questions are normalized for case, punctuation and diacritics and suppressed for 90 seconds in a bounded 64-entry cache. Substantial overlap variants (at least six unique words, Jaccard >= 0.85) are also suppressed. Failed/cancelled answers can be retried; no automatic network retry occurs. Clear conversation context also clears the duplicate cache. Repeating deliberately within the TTL requires clearing it or waiting.
+The current hint and up to three waiting hints are retained. Completed answers are never silently replaced: a full inbox pauses the final inference pipeline until a display slot becomes available. Audio backpressure is still bounded to two waiting utterances; oldest or >30-second-old audio is dropped with a counter/notice. This avoids unlimited latency/memory under sustained speech. An utterance longer than 30 seconds is rejected visibly and capture resumes after two seconds of silence; no incomplete utterance is automatically sent at the size limit.
 
-## Demo without devices, keys or network
+Preview timeout: 8 seconds. Final STT: 20 seconds. Chat: 30 seconds total. Abort and generation checks prevent late results from reappearing. Timeouts and provider errors are visible and do not permanently block later speech. Pause cancels requests, clears hints and preview text, and stops the microphone. A failed native stop retains unknown microphone state.
 
-```sh
-npm run demo:continuous
-```
+Diagnostic events `answer.ready`, `answer.shown`, and `answer.expired` distinguish inference completion from UI publication/expiry. These are UI events, not hardware acknowledgements; SDK display write spans separately record success/failure. Actual lens delivery, Whisper latency and noisy-room VAD sensitivity still need G2 testing.
 
-Runs the same PCM segmenter/controller with synthetic silence/speech and scripted transcripts: ordinary statement → question → duplicate → rhetorical phrase → new question. It verifies skip/dedup/first-answer/latest-answer behavior and ends paused.
+## Device test
 
-In the phone/browser UI select **Continuous demo**, Resume, then **Simulate speech segment** five times. It uses the same synthetic PCM path and no microphone or provider calls; labels explicitly say SIMULATED/DEMO. Inject before the missing-PCM watchdog fires or Resume again. The selected reply filter also applies to the demo.
+1. Upload `beast-g2-0.3.0.ehpk` to the existing private project.
+2. Apply direct Beast connection, enter the key at runtime, and test a text question first.
+3. Select Continuous G2, resume, and speak for 3–5 seconds. Verify draft words appear before you stop.
+4. Pause for less than two seconds and continue: there should be one final utterance. Then pause for two seconds and verify final transcription/chat.
+5. Ask a second question while the first hint is visible. It should appear automatically after the first ten-second interval. No swipe is required.
+6. Disconnect the network during inference. Verify a visible error, then reconnect and try a fresh utterance. Export diagnostics after a failure.
 
-Tests additionally exercise the actual loopback HTTP demo gateway with synthetic continuous PCM, its WAV transcription endpoint and streamed chat. This establishes protocol/controller integration, not rendered browser UI or real speech recognition quality.
-
-## Evidence and pending gates
-
-Deterministic tests cover silence/noise, fixed/odd packet boundaries, bounded long speech, question filters, repeat/overlap suppression, slow API, pending overflow/staleness, speech during chat, pause/resume, stale inference/start completion, lost PCM, shutdown failure and failed-answer retry. Run `npm test`, `npm run demo:continuous`, `npm run pack`.
-
-Actual Beast endpoints/models, microphone quality/thresholds, BLE, Czech font, latency, battery, Android lock-screen/background behavior and rendered mobile interaction remain unverified. The existing cloud browser cannot reach the development container's loopback network. See CLOUD-VERIFICATION.md. The manifest still uses an explicitly nonproduction example origin. Nothing was merged or deployed and no paid resource was created.
+The host still pauses capture when the WebView is hidden. Keep the phone/plugin foreground during this initial test. Physical G2, live Beast and background behavior are not covered by the automated tests.

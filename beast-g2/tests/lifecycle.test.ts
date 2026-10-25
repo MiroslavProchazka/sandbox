@@ -54,3 +54,39 @@ test('SDK dispose records an unconfirmed microphone shutdown instead of claiming
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.ok(diagnostics.snapshot().some(event => event.event === 'dispose.stop_failed' && event.level === 'error'))
 })
+test('native timeout releases caller but never overlaps late start with queued stop', async () => {
+  const opening = deferred<boolean>(); const calls: boolean[] = []
+  const connection = await attachEven({ onEvenHubEvent() { return () => {} }, async createStartUpPageContainer() { return 0 }, audioControl(open: boolean) { calls.push(open); return open ? opening.promise : Promise.resolve(true) } } as any, '', () => {}, () => {}, 15)
+  await assert.rejects(connection.audio.start(), { name: 'TimeoutError' })
+  await assert.rejects(connection.audio.stop(), { name: 'TimeoutError' })
+  assert.deepEqual(calls, [true])
+  opening.resolve(true); await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(calls, [true, false])
+  await connection.audio.stop(); connection.dispose()
+})
+test('hung display reports timeout once and suppresses further writes including late settlement', async () => {
+  const { LatestDisplay } = await import('../src/display')
+  const pending = deferred<void>(); let writes = 0, errors = 0
+  const display = new LatestDisplay(() => { writes++; return pending.promise }, () => { errors++ }, 1, 15)
+  display.update('one'); display.update('two')
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(errors, 1); assert.equal(writes, 1)
+  pending.resolve(); display.update('three'); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(writes, 1); display.dispose()
+})
+test('display retries transient rejection and acknowledges only successful delivery', async () => {
+  const { LatestDisplay } = await import('../src/display')
+  let attempts = 0, delivered = 0, failures = 0
+  const display = new LatestDisplay(async () => { if (++attempts < 3) throw new Error('busy') }, () => { failures++ }, 1, 100, () => { delivered++ })
+  display.update('hint')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(attempts, 3); assert.equal(delivered, 1); assert.equal(failures, 0); display.dispose()
+})
+test('late native resolution after deadline never acknowledges a dead display queue', async () => {
+  const { LatestDisplay } = await import('../src/display')
+  const pending = deferred<void>(); let delivered = 0
+  const display = new LatestDisplay(() => pending.promise, () => {}, 1, 10, () => { delivered++ })
+  display.update('old'); await new Promise(resolve => setTimeout(resolve, 20)); pending.resolve()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(delivered, 0); assert.equal(display.retry(), false)
+})
