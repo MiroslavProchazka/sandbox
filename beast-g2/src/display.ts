@@ -17,7 +17,7 @@ export function pages(text: string): string[] {
   return result.length ? result : ['']
 }
 export function hud(state: State, page: number) {
-  const content = state.phase === 'error' ? state.error : state.answer || state.transcript || (state.phase === 'recording' ? 'Speak, then tap to send.' : 'Tap to ask Beast.\nDouble tap: cancel.\nSwipe: read answer.')
+  const content = state.phase === 'error' ? state.error : state.answer || state.transcript || (state.phase === 'recording' ? 'Speak, then tap to send.' : 'Tap to ask Beast.\nDouble tap: exit.\nSwipe: read answer.')
   const all = pages(content), index = Math.min(Math.max(0, page), all.length - 1)
   return { text: `BEAST / ${labels[state.phase]}${state.phase === 'recording' ? ` ${state.seconds}s` : ''}\n\n${all[index]}\n\n${index + 1}/${all.length}`, count: all.length }
 }
