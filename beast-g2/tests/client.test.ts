@@ -60,3 +60,12 @@ test('continuous synthetic PCM → real HTTP demo STT → chat stream publishes 
   await answered
   assert.match(c.state.reply!.answer, /lokální demo/); assert.equal(c.state.microphone, 'on')
 })
+
+test('gateway client delivers source metadata before answer deltas', async t => {
+  const gateway = createGateway({ ...loadConfig({DEMO_MODE:'1'}), demo:false, searchKey:'fake', key:'fake', chatUrl:'https://fake.invalid/chat' }, async (url: URL | string) => String(url).startsWith('https://api.search.brave.com/') ? Response.json({web:{results:[{title:'Evidence',url:'https://example.com',description:'A fact'}]}}) : new Response('data: {"choices":[{"delta":{"content":"Answer [1]"},"finish_reason":"stop"}]}\n\n'))
+  await new Promise<void>(resolve => gateway.listen(0,'127.0.0.1',resolve)); t.after(()=>{gateway.closeAllConnections();gateway.close()})
+  const client = new GatewayClient(()=>({gateway:`http://127.0.0.1:${(gateway.address() as any).port}`,token:'local-demo-token-only',language:'cs'}))
+  const events:string[]=[]
+  await client.chat('question',[],AbortSignal.timeout(1000),value=>events.push(value),{webQuery:'question',onSources:evidence=>{assert.equal(evidence.sources[0].title,'Evidence');events.push('sources')}})
+  assert.deepEqual(events,['sources','Answer [1]'])
+})

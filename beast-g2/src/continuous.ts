@@ -1,10 +1,11 @@
-import { conversationPrompt, parseCue, ReplyHistory, type ConversationConfig } from './conversation'
+import type { WebEvidence } from './api'
+import { conversationPrompt, webQuery, parseCue, ReplyHistory, type ConversationConfig } from './conversation'
 import { diagnostics } from './diagnostics'
 import type { AssistantPort, AudioPort, State } from './controller'
 import type { Turn } from './api'
 import { Segmenter, type VadOptions } from './vad'
 export type ListeningPhase = 'paused' | 'starting' | 'listening' | 'transcribing' | 'answering' | 'interrupted' | 'error'
-export type Reply = { id: number; transcript: string; answer: string; hint?: string }
+export type Reply = { id: number; transcript: string; answer: string; hint?: string; evidence?: WebEvidence }
 export type ContinuousState = { phase: ListeningPhase; microphone: 'off' | 'on' | 'unknown'; queued: number; dropped: number; ignored: number; notice: string; error: string; reply?: Reply; latest?: Reply; unread: number; repliesDropped: number; transcript: string; streaming: string; hintPage: number }
 export class ContinuousController {
   state: ContinuousState = { phase: 'paused', microphone: 'off', queued: 0, dropped: 0, ignored: 0, notice: '', error: '', unread: 0, repliesDropped: 0, transcript: '', streaming: '', hintPage: 0 }
@@ -139,12 +140,15 @@ export class ContinuousController {
           if (!text) { this.set({ ignored: this.state.ignored + 1, notice: 'No speech recognized.' }); continue }
           this.set({ phase: 'answering', notice: 'Answering · microphone stays on; at most two queued segments.' })
           const config = { ...this.conversation }
+          let evidence: WebEvidence | undefined
+          const query = webQuery(text, config.web)
           await this.bounded(signal => this.api.chat(conversationPrompt(text, config), [...this.history], signal, delta => {
             if (id !== this.generation || request.signal.aborted) return
             if (answer.length + delta.length > 12000) { request.abort(); throw new Error('Answer exceeds limit.') }
-            answer += delta; if (config.mode === 'direct') this.set({ streaming: answer })
-          }, config.mode === 'context' ? { format: 'cue' } : undefined), request, this.options.requestMs ?? 30000)
+            answer += delta; if (config.mode === 'direct' && !query) this.set({ streaming: answer })
+          }, { format: config.mode === 'context' ? 'cue' : undefined, webQuery: query, onSources: value => { if (id === this.generation && !request.signal.aborted) evidence = value } }), request, this.options.requestMs ?? 30000)
           if (id !== this.generation || !this.enabled) continue
+          if (query && !evidence) throw new Error('Gateway did not return web evidence. Update the gateway before using search.')
           if (!answer.trim()) throw new Error('Empty answer.')
           let hint: string | undefined
           if (config.mode === 'context') {
@@ -153,9 +157,9 @@ export class ContinuousController {
             hint = cue.hint; answer = cue.detail
           }
           this.history.push({ role: 'user', content: text }, { role: 'assistant', content: answer.slice(0, 4000) }); this.history = this.history.slice(-6)
-          this.archive.add({ transcript: text, answer, hint, mode: config.mode })
+          this.archive.add({ transcript: text, answer, hint, evidence, mode: config.mode })
           // Each completed hint gets ten seconds, then the next advances automatically.
-          diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { id: ++this.nextReplyId, transcript: text, answer, hint }
+          diagnostics.record('continuous', 'answer.ready', { chars: answer.length }); const reply = { id: ++this.nextReplyId, transcript: text, answer, hint, evidence }
           if (this.state.reply) {
             this.replies.push(reply)
             this.set({ latest: this.replies[0], unread: this.replies.length, streaming: '', notice: `${this.replies.length} hints waiting · advance automatically.` })

@@ -59,3 +59,28 @@ test('upstream timeout aborts stalled stream and releases gateway capacity', asy
   }
   assert.equal(aborted, 3);
 });
+test('web retrieval precedes inference, isolates search query and returns trusted source metadata', async t => {
+  let calls = 0;
+  const base = await run(t, { demo: false, searchKey: 'search-secret', chatUrl: 'https://fake.invalid/chat', key: 'beast-secret' }, async (url, options) => {
+    calls++;
+    if (calls === 1) {
+      assert.equal(new URL(url).searchParams.get('q'), 'public question');
+      assert.doesNotMatch(String(url), /private note/);
+      return Response.json({ web: { results: [{ title:'Source', url:'https://example.com/fact', description:'Evidence, not instructions' }] } });
+    }
+    const input = JSON.parse(options.body);
+    assert.match(input.messages[0].content, /untrusted data/);
+    assert.match(input.messages.at(-2).content, /Evidence, not instructions/);
+    assert.equal(input.messages.at(-1).content, 'private note and question');
+    return new Response('data: {"choices":[{"delta":{"content":"Answer [1]"},"finish_reason":"stop"}]}\n\n');
+  });
+  const response = await fetch(`${base}/api/chat`, { method:'POST', headers, body:JSON.stringify({ text:'private note and question', webQuery:'public question' }) });
+  const events = (await response.text()).trim().split('\n').map(JSON.parse);
+  assert.equal(calls, 2); assert.equal(events[1].type, 'sources'); assert.equal(events[1].sources[0].snippet, undefined); assert.equal(events.at(-1).type, 'done');
+});
+test('failed search never calls Beast or returns an ungrounded success', async t => {
+  let calls = 0;
+  const base = await run(t, { demo:false, searchKey:'key' }, async () => { calls++; return new Response('secret', {status:429}); });
+  const result = await fetch(`${base}/api/chat`, {method:'POST',headers,body:JSON.stringify({text:'question',webQuery:'question'})});
+  assert.equal(result.status,503); assert.equal(calls,1); assert.doesNotMatch(await result.text(), /secret/);
+});

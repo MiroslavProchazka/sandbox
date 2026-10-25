@@ -59,3 +59,7 @@ test('direct Beast cue mode requests structured cues without changing default ch
   let output = ''; await new BeastClient(() => settings).chat('Conversation', [], new AbortController().signal, x => { output += x }, { format:'cue' })
   assert.equal(output, '{"show":false}')
 })
+
+test('direct Beast refuses web instead of pretending to search', async () => {
+  await assert.rejects(new BeastClient(()=>settings).chat('question',[],new AbortController().signal,()=>{}, {webQuery:'question'}), /custom gateway/)
+})

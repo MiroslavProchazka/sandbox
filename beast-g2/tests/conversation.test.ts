@@ -48,3 +48,18 @@ test('gateway cue mode has a JSON contract while direct mode remains plain text'
   assert.match(validateChat({ text:'Question' })[0].content, /plain text/)
   assert.throws(() => validateChat({ text:'Question', format:'unsupported' }))
 })
+
+test('web commands share only explicit query and preserve sources through pause/export', async t => {
+  const { webQuery } = await import('../src/conversation')
+  assert.equal(webQuery('vyhledej počasí', true), 'počasí')
+  assert.equal(webQuery('search the web weather', true), 'weather')
+  assert.equal(webQuery('vyhledej počasí', false), undefined)
+  assert.equal(webQuery('Ordinary speech', true), undefined)
+  const evidence = { sources: [{id:1,title:'Source',url:'https://example.com'}], retrievedAt:'2026-10-25T12:00:00Z' }
+  const c = new ContinuousController({async start(){},async stop(){}}, {
+    async transcribe(){return 'vyhledej počasí'},
+    async chat(_text,_history,_signal,delta,options){ assert.equal(options?.webQuery,'počasí'); options?.onSources?.(evidence); delta('Weather [1]') }
+  },()=>{})
+  t.after(()=>c.pause()); c.configureConversation({mode:'direct',notes:'private prep',web:true}); await c.start(); simulateUtterance(c); await tick();
+  assert.deepEqual(c.state.reply?.evidence,evidence); await c.pause(); assert.deepEqual(JSON.parse(c.archive.export()).replies[0].evidence,evidence)
+})

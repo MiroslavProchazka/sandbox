@@ -4,7 +4,9 @@ import { spawnSync } from 'node:child_process';
 const url = new URL(process.argv[2] || '');
 if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Pass a plain HTTPS Beast API base URL without credentials.');
 const manifest = JSON.parse(readFileSync('app.json', 'utf8'));
-manifest.permissions.find(p => p.name === 'network').whitelist = [url.origin];
+const origins = [url.origin];
+if (process.argv[3]) { const gateway = new URL(process.argv[3]); if (gateway.protocol !== 'https:' || gateway.username || gateway.password || gateway.search || gateway.hash || gateway.pathname !== '/') throw new Error('Optional gateway must be a plain HTTPS origin.'); origins.push(gateway.origin); }
+manifest.permissions.find(p => p.name === 'network').whitelist = [...new Set(origins)];
 writeFileSync('app.device.json', JSON.stringify(manifest, null, 2) + '\n');
 const fingerprint = createHash('sha256');
 for (const name of readdirSync('src').sort()) fingerprint.update(name).update(readFileSync(`src/${name}`));

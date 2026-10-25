@@ -60,5 +60,5 @@ export function continuousHud(state: import('./continuous').ContinuousState) {
   const hint = lines(answer || (state.error ? `Error: ${state.error}` : state.phase === 'transcribing' ? 'Transcribing…' : state.phase === 'answering' ? 'Beast is thinking…' : ''))
   const visible = hint.slice(0, 3)
   if (hint.length > 3) visible[2] = [...visible[2]].slice(0, 37).join('') + '…'
-  return `YOU / ${state.microphone.toUpperCase()}\n${transcript}\n\n${!answer && state.error ? 'ERROR' : state.streaming && !state.reply ? 'BEAST …' : 'BEAST'}\n${visible.join('\n')}`
+  return `YOU / ${state.microphone.toUpperCase()}\n${transcript}\n\n${!answer && state.error ? 'ERROR' : state.streaming && !state.reply ? 'BEAST …' : state.reply?.evidence ? 'BEAST / WEB' : 'BEAST'}\n${visible.join('\n')}`
 }

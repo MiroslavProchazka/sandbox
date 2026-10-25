@@ -5,3 +5,5 @@
 .debug-panel{max-width:1240px;margin:0 auto;padding:24px 32px;border-top:1px solid #303a31}.debug-panel summary{cursor:pointer;padding:12px 0}.debug-panel pre{font-size:11px;max-height:360px;overflow:auto;white-space:pre-wrap}.debug-panel textarea{width:100%;min-height:200px;background:#111512;color:#edf3e8}.debug-panel p{font-size:12px}
 
 .lens-status { display:flex; justify-content:space-between; gap:12px; font:12px monospace; color:#a7efbb; margin-bottom:6px; }
+
+input[type=checkbox]{width:auto;margin-right:8px}#hint-history a{color:#b3e887;overflow-wrap:anywhere}#hint-history p{white-space:pre-wrap;overflow-wrap:anywhere}#prep-notes,#history-json{width:100%;min-height:100px;background:#1b221b;color:#edf3e8;border:1px solid #3d4a3b;border-radius:8px;padding:12px}
